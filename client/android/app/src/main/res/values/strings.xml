@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Campus Seatline</string>
+    <string name="title_activity_main">Campus Seatline</string>
+    <string name="package_name">edu.campus.seatline</string>
+    <string name="custom_url_scheme">edu.campus.seatline</string>
+</resources>

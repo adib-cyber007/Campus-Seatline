@@ -17,6 +17,25 @@ npm run dev       # runs API (:4000) and web app (:5173) together
 
 Open http://localhost:5173
 
+## Android APK
+
+The Android client is a Capacitor shell around the same React application. Build a debug APK
+locally from `client/` with Android SDK 36 and Java 21 installed:
+
+```bash
+npm run android:build
+```
+
+The APK is written to `client/android/app/build/outputs/apk/debug/app-debug.apk`. Every push that
+changes the client also runs the `Android APK` GitHub Actions workflow and publishes the same file
+as the `campus-seatline-debug-apk` artifact.
+
+On first launch, open **Server connection** and enter the reachable root URL of the running
+Express/Socket.IO backend (for example `https://seatline.example.edu`, without `/api`). The APK
+permits plain HTTP so it can connect to a campus-LAN development server, but HTTPS should be used
+for any deployment outside a trusted test network. The backend is not embedded in the APK and
+must be hosted separately.
+
 Verify the backend core loop any time with:
 
 ```bash

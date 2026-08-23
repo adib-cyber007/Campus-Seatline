@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { api, setToken } from '../api'
+import { api, getApiOrigin, isNativeApp, setApiOrigin, setToken } from '../api'
 
 export default function LoginPage({ onLoggedIn }) {
   const [mode, setMode] = useState('login')
@@ -7,10 +7,32 @@ export default function LoginPage({ onLoggedIn }) {
   const [form, setForm] = useState({ name: '', email: '', password: '', role: 'rider', stopIds: [] })
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [serverUrl, setServerUrl] = useState(() => getApiOrigin())
+  const [serverBusy, setServerBusy] = useState(false)
+  const [serverNotice, setServerNotice] = useState('')
+  const nativeApp = isNativeApp()
 
   useEffect(() => {
     api('/meta').then(d => setStops(d.stops)).catch(() => {})
   }, [])
+
+  const saveServer = async () => {
+    setError('')
+    setServerNotice('')
+    setServerBusy(true)
+    try {
+      const saved = setApiOrigin(serverUrl)
+      setServerUrl(saved)
+      setToken(null)
+      const data = await api('/meta')
+      setStops(data.stops)
+      setServerNotice(saved ? 'Connected. You can sign in now.' : 'Using this website’s server.')
+    } catch (err) {
+      setError(err.message === 'Failed to fetch' ? 'Could not reach that server. Check the address and connection.' : err.message)
+    } finally {
+      setServerBusy(false)
+    }
+  }
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
   const toggleStop = id =>
@@ -24,6 +46,10 @@ export default function LoginPage({ onLoggedIn }) {
   const submit = async e => {
     e.preventDefault()
     setError('')
+    if (nativeApp && !getApiOrigin()) {
+      setError('Set the Campus Seatline server address before signing in.')
+      return
+    }
     setBusy(true)
     try {
       const path = mode === 'login' ? '/auth/login' : '/auth/register'
@@ -73,6 +99,29 @@ export default function LoginPage({ onLoggedIn }) {
             <button type="button" role="tab" aria-selected={mode === 'login'} className={mode === 'login' ? 'tab active' : 'tab'} onClick={() => { setMode('login'); setError('') }}>Sign in</button>
             <button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'tab active' : 'tab'} onClick={() => { setMode('register'); setError('') }}>Register</button>
           </div>
+          <details className="server-settings" open={nativeApp && !getApiOrigin()}>
+            <summary>Server connection</summary>
+            <div className="server-settings-body">
+              <label>
+                Campus Seatline server
+                <input
+                  type="url"
+                  inputMode="url"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  placeholder="https://seatline.example.edu"
+                  value={serverUrl}
+                  onChange={e => setServerUrl(e.target.value)}
+                  aria-describedby="server-help"
+                />
+              </label>
+              <p id="server-help" className="field-help">Use the public or campus-network address of the running backend. Do not add <code>/api</code>.</p>
+              <button type="button" className="btn secondary block" disabled={serverBusy} onClick={saveServer}>
+                {serverBusy ? <><span className="spinner" /> Testing connection</> : 'Save and test connection'}
+              </button>
+              {serverNotice && <p className="success-note" role="status">✓ {serverNotice}</p>}
+            </div>
+          </details>
           {mode === 'register' && (
             <label>Full name<input required autoComplete="name" value={form.name} onChange={e => set('name', e.target.value)} /></label>
           )}
