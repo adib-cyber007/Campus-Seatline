@@ -1,5 +1,8 @@
 {
   "appId": "edu.campus.seatline",
   "appName": "Campus Seatline",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "http"
+  }
 }
