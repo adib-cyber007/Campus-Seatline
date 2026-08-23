@@ -1,0 +1,14 @@
+{
+  "name": "bus-occupancy-platform",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "setup": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n server,client -c blue,green \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "smoke": "npm --prefix server run smoke"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

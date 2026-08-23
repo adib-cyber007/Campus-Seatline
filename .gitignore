@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+*.log
+.playwright-mcp/
+seatline-*.png
+.gradle/
+**/build/
+local.properties
