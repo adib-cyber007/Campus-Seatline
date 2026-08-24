@@ -1,0 +1,287 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="960" viewBox="0 0 1800 960" role="img" aria-labelledby="title desc">
+  <title id="title">Campus Seatline technical approach</title>
+  <desc id="desc">A technical approach diagram showing how students, faculty, Incharge riders, and transport admins use Campus Seatline to report and manage stop-centric bus occupancy with live updates.</desc>
+  <defs>
+    <linearGradient id="header" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0f1b3d"/>
+      <stop offset="1" stop-color="#173a7a"/>
+    </linearGradient>
+    <linearGradient id="blueCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef4ff"/>
+      <stop offset="1" stop-color="#e2ebff"/>
+    </linearGradient>
+    <linearGradient id="mintCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#effbf7"/>
+      <stop offset="1" stop-color="#dcf4ed"/>
+    </linearGradient>
+    <linearGradient id="amberCard" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff8e9"/>
+      <stop offset="1" stop-color="#ffedc4"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#132247" flood-opacity=".13"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4776c9"/>
+    </marker>
+    <marker id="arrowMint" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#188e78"/>
+    </marker>
+    <style>
+      .ink { fill:#15213d; font-family: Inter, Segoe UI, Arial, sans-serif; }
+      .muted { fill:#5d6b86; font-family: Inter, Segoe UI, Arial, sans-serif; }
+      .white { fill:#fff; font-family: Inter, Segoe UI, Arial, sans-serif; }
+      .title { font-size:30px; font-weight:800; letter-spacing:2px; }
+      .subtitle { font-size:12px; font-weight:700; letter-spacing:1.7px; }
+      .section { font-size:12px; font-weight:800; letter-spacing:1.3px; }
+      .cardTitle { font-size:16px; font-weight:800; }
+      .cardBody { font-size:12px; font-weight:500; }
+      .tiny { font-size:10px; font-weight:600; }
+      .pill { font-size:11px; font-weight:800; }
+      .step { font-size:12px; font-weight:900; }
+      .flow { fill:none; stroke:#4776c9; stroke-width:2.1; marker-end:url(#arrow); }
+      .flowMint { fill:none; stroke:#188e78; stroke-width:2.1; marker-end:url(#arrowMint); }
+      .flowSoft { fill:none; stroke:#8ea4d3; stroke-width:1.5; stroke-dasharray:5 5; marker-end:url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1600" height="960" fill="#f6f8fc"/>
+  <rect x="0" y="0" width="1800" height="92" fill="url(#header)"/>
+  <rect x="0" y="92" width="1600" height="5" fill="#46b89f"/>
+
+  <!-- Brand and heading -->
+  <g transform="translate(42 24)">
+    <rect width="44" height="44" rx="13" fill="#46b89f"/>
+    <path d="M10 16h24c3 0 5 2 5 5v13H5V21c0-3 2-5 5-5Z" fill="none" stroke="#fff" stroke-width="2.6"/>
+    <path d="M9 16l3-6h16l4 6M11 28h22" fill="none" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>
+    <circle cx="12" cy="37" r="3" fill="#fff"/><circle cx="32" cy="37" r="3" fill="#fff"/>
+    <text x="58" y="20" class="white cardTitle">CAMPUS SEATLINE</text>
+    <text x="58" y="39" class="white subtitle" opacity=".72">STOP-CENTRIC BUS OCCUPANCY</text>
+  </g>
+  <text x="800" y="40" text-anchor="middle" class="white title">TECHNICAL APPROACH</text>
+  <text x="800" y="66" text-anchor="middle" class="white subtitle" opacity=".75">REAL-TIME SEAT VISIBILITY WITHOUT GPS TRACKING</text>
+
+  <!-- Main canvas labels -->
+  <text x="42" y="134" class="muted section">PEOPLE &amp; ENTRY</text>
+  <text x="322" y="134" class="muted section">STOP / BUS CONTEXT</text>
+  <text x="600" y="134" class="muted section">REPORTING CHANNELS</text>
+  <text x="900" y="134" class="muted section">DOMAIN PROCESSING</text>
+  <text x="1280" y="134" class="muted section">TECH STACK</text>
+
+  <!-- Role cards -->
+  <g filter="url(#shadow)">
+    <rect x="42" y="164" width="210" height="82" rx="16" fill="#fff" stroke="#dbe3f3"/>
+    <circle cx="75" cy="205" r="22" fill="#e9f0ff"/>
+    <path d="M65 213c2-8 18-8 20 0M69 198a6 6 0 1 0 12 0" fill="none" stroke="#2457e6" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="110" y="198" class="ink cardTitle">Students / Faculty</text>
+    <text x="110" y="219" class="muted cardBody">Check seats and report intent</text>
+
+    <rect x="42" y="264" width="210" height="82" rx="16" fill="url(#mintCard)" stroke="#bde4d8"/>
+    <circle cx="75" cy="305" r="22" fill="#c8eee3"/>
+    <path d="M64 313h22M67 301h16M72 292h6v21h-6z" fill="none" stroke="#188e78" stroke-width="2.1" stroke-linecap="round"/>
+    <text x="110" y="298" class="ink cardTitle">Rider + Incharge</text>
+    <text x="110" y="319" class="muted cardBody">Granted authority, same account</text>
+
+    <rect x="42" y="364" width="210" height="82" rx="16" fill="url(#amberCard)" stroke="#f0d39d"/>
+    <circle cx="75" cy="405" r="22" fill="#ffe7b8"/>
+    <path d="M66 413h18M69 399h12M72 391h6v22" fill="none" stroke="#c68118" stroke-width="2.2" stroke-linecap="round"/>
+    <text x="110" y="398" class="ink cardTitle">Transport Admin</text>
+    <text x="110" y="419" class="muted cardBody">Manage network and authority</text>
+  </g>
+
+  <!-- Entry -->
+  <g filter="url(#shadow)">
+    <rect x="300" y="244" width="205" height="126" rx="18" fill="url(#blueCard)" stroke="#b7ccfa"/>
+    <circle cx="330" cy="273" r="16" fill="#2457e6"/>
+    <text x="330" y="278" text-anchor="middle" class="white step">01</text>
+    <text x="358" y="279" class="ink cardTitle">Sign in / Register</text>
+    <text x="322" y="311" class="muted cardBody">JWT authentication</text>
+    <text x="322" y="331" class="muted cardBody">Rider chooses one or more stops</text>
+    <rect x="322" y="345" width="140" height="15" rx="7" fill="#d5e2ff"/>
+    <text x="392" y="356" text-anchor="middle" class="ink tiny">NO SEPARATE INCHARGE LOGIN</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="540" y="244" width="205" height="126" rx="18" fill="#fff" stroke="#dbe3f3"/>
+    <circle cx="570" cy="273" r="16" fill="#4f6b9e"/>
+    <text x="570" y="278" text-anchor="middle" class="white step">02</text>
+    <text x="598" y="279" class="ink cardTitle">Stop + Bus context</text>
+    <text x="562" y="311" class="muted cardBody">Buses are linked to ordered stops</text>
+    <text x="562" y="331" class="muted cardBody">No fixed route abstraction</text>
+    <rect x="562" y="345" width="142" height="15" rx="7" fill="#edf1f8"/>
+    <text x="633" y="356" text-anchor="middle" class="ink tiny">RELEVANT BUSES RESOLVED</text>
+  </g>
+
+  <!-- Reporting channels -->
+  <g filter="url(#shadow)">
+    <rect x="780" y="174" width="210" height="120" rx="18" fill="url(#mintCard)" stroke="#bde4d8"/>
+    <circle cx="810" cy="204" r="16" fill="#188e78"/>
+    <text x="810" y="209" text-anchor="middle" class="white step">03A</text>
+    <text x="838" y="210" class="ink cardTitle">Soft Hold</text>
+    <text x="802" y="240" class="muted cardBody">Rider says “Yes” before boarding</text>
+    <text x="802" y="260" class="muted cardBody">Available seats reduce temporarily</text>
+    <rect x="802" y="273" width="132" height="14" rx="7" fill="#bfe9dc"/>
+    <text x="868" y="284" text-anchor="middle" class="ink tiny">ONE HOLD PER TRIP</text>
+
+    <rect x="780" y="330" width="210" height="120" rx="18" fill="#fff5e5" stroke="#f0d39d"/>
+    <circle cx="810" cy="360" r="16" fill="#c68118"/>
+    <text x="810" y="365" text-anchor="middle" class="white step">03B</text>
+    <text x="838" y="366" class="ink cardTitle">BLE-confirmed report</text>
+    <text x="802" y="396" class="muted cardBody">Proximity prompt asks the rider</text>
+    <text x="802" y="416" class="muted cardBody">“Have you boarded this bus?”</text>
+    <rect x="802" y="429" width="147" height="14" rx="7" fill="#ffe1aa"/>
+    <text x="875" y="440" text-anchor="middle" class="ink tiny">MOCKED BLE IN MVP</text>
+  </g>
+
+  <!-- Processing -->
+  <g filter="url(#shadow)">
+    <rect x="1030" y="244" width="215" height="156" rx="18" fill="#fff" stroke="#cbd8f1"/>
+    <circle cx="1062" cy="276" r="16" fill="#2457e6"/>
+    <text x="1062" y="281" text-anchor="middle" class="white step">04</text>
+    <text x="1090" y="282" class="ink cardTitle" font-size="14">Occupancy state</text>
+    <text x="1052" y="314" class="muted cardBody">none → soft_hold → occupied</text>
+    <text x="1052" y="336" class="muted cardBody">Duplicate and rapid reports rejected</text>
+    <text x="1052" y="358" class="muted cardBody">Trip-day scoped, idempotent updates</text>
+    <rect x="1052" y="373" width="165" height="14" rx="7" fill="#e5ecff"/>
+    <text x="1134" y="384" text-anchor="middle" class="ink tiny">COUNTS NEVER DOUBLE-INFLATE</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1030" y="440" width="215" height="160" rx="18" fill="url(#blueCard)" stroke="#b7ccfa"/>
+    <circle cx="1062" cy="472" r="16" fill="#2457e6"/>
+    <text x="1062" y="477" text-anchor="middle" class="white step">05</text>
+    <text x="1090" y="478" class="ink cardTitle">Derived seat counts</text>
+    <text x="1052" y="510" class="ink cardBody" font-weight="800">Available = capacity − occupied − holds</text>
+    <text x="1052" y="536" class="muted cardBody">Incharge edits Available only</text>
+    <text x="1052" y="558" class="muted cardBody">Occupied is recalculated automatically</text>
+    <rect x="1052" y="572" width="153" height="14" rx="7" fill="#d5e2ff"/>
+    <text x="1128" y="583" text-anchor="middle" class="ink tiny">LIVE INVARIANT</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1030" y="640" width="215" height="126" rx="18" fill="url(#mintCard)" stroke="#bde4d8"/>
+    <circle cx="1062" cy="672" r="16" fill="#188e78"/>
+    <text x="1062" y="677" text-anchor="middle" class="white step">06</text>
+    <text x="1090" y="678" class="ink cardTitle">Live propagation</text>
+    <text x="1052" y="710" class="muted cardBody">Socket.IO sends occupancy updates</text>
+    <text x="1052" y="730" class="muted cardBody">Notifications reach downstream stops</text>
+    <rect x="1052" y="741" width="125" height="14" rx="7" fill="#bfe9dc"/>
+    <text x="1114" y="752" text-anchor="middle" class="ink tiny">NO REFRESH REQUIRED</text>
+  </g>
+
+  <!-- Admin and audit branch -->
+  <g filter="url(#shadow)">
+    <rect x="300" y="500" width="205" height="150" rx="18" fill="url(#amberCard)" stroke="#f0d39d"/>
+    <circle cx="330" cy="532" r="16" fill="#c68118"/>
+    <text x="330" y="537" text-anchor="middle" class="white step">A</text>
+    <text x="358" y="538" class="ink cardTitle">Admin operations</text>
+    <text x="322" y="570" class="muted cardBody">Create/edit stops and buses</text>
+    <text x="322" y="590" class="muted cardBody">Link buses to stops and capacity</text>
+    <text x="322" y="610" class="muted cardBody">Grant or revoke authority</text>
+    <text x="322" y="630" class="muted cardBody">Search, filter, inspect audit log</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="540" y="500" width="205" height="150" rx="18" fill="#fff" stroke="#dbe3f3"/>
+    <circle cx="570" cy="532" r="16" fill="#4f6b9e"/>
+    <text x="570" y="537" text-anchor="middle" class="white step">B</text>
+    <text x="598" y="538" class="ink cardTitle">Authority + audit</text>
+    <text x="562" y="570" class="muted cardBody">Assignment scoped by bus or stop</text>
+    <text x="562" y="590" class="muted cardBody">Every report attempt is recorded</text>
+    <text x="562" y="610" class="muted cardBody">Overrides include old/new values</text>
+    <text x="562" y="630" class="muted cardBody">Admin-only activity stream</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="780" y="520" width="210" height="110" rx="18" fill="#fff" stroke="#dbe3f3"/>
+    <circle cx="812" cy="550" r="16" fill="#6c54bc"/>
+    <text x="812" y="555" text-anchor="middle" class="white step">C</text>
+    <text x="840" y="556" class="ink cardTitle">Persistence + evidence</text>
+    <text x="802" y="586" class="muted cardBody">In-memory store for MVP</text>
+    <text x="802" y="606" class="muted cardBody">Audit trail and arrival events</text>
+  </g>
+
+  <!-- Footer safeguards -->
+  <rect x="42" y="812" width="1203" height="90" rx="18" fill="#0f1b3d"/>
+  <text x="72" y="846" class="white section">GUARDRAILS BY DESIGN</text>
+  <g transform="translate(72 862)">
+    <rect width="208" height="24" rx="12" fill="#243764"/>
+    <circle cx="15" cy="12" r="5" fill="#46b89f"/>
+    <text x="29" y="16" class="white pill">No GPS or location tracking</text>
+    <rect x="226" width="220" height="24" rx="12" fill="#243764"/>
+    <circle cx="241" cy="12" r="5" fill="#46b89f"/>
+    <text x="255" y="16" class="white pill">No trust / reputation scores</text>
+    <rect x="464" width="245" height="24" rx="12" fill="#243764"/>
+    <circle cx="479" cy="12" r="5" fill="#46b89f"/>
+    <text x="493" y="16" class="white pill">Incharge is granted authority</text>
+    <rect x="727" width="238" height="24" rx="12" fill="#243764"/>
+    <circle cx="742" cy="12" r="5" fill="#46b89f"/>
+    <text x="756" y="16" class="white pill">Occupied is never directly edited</text>
+  </g>
+
+  <!-- Tech stack panel -->
+  <rect x="1280" y="154" width="478" height="648" rx="22" fill="#fff" stroke="#dbe3f3" filter="url(#shadow)"/>
+  <text x="1311" y="194" class="ink title" font-size="23">TECH STACK</text>
+  <text x="1311" y="218" class="muted cardBody">The components behind the workflow</text>
+
+  <g transform="translate(1311 244)">
+    <rect width="416" height="104" rx="15" fill="#eef4ff" stroke="#cbd8f1"/>
+    <rect x="16" y="15" width="74" height="22" rx="11" fill="#2457e6"/>
+    <text x="53" y="30" text-anchor="middle" class="white pill">FRONTEND</text>
+    <text x="18" y="61" class="ink cardTitle">React 18 + Vite</text>
+    <text x="18" y="82" class="muted cardBody">Responsive UI · plain CSS design system</text>
+    <text x="18" y="98" class="muted cardBody">Fetch API · Socket.IO Client</text>
+  </g>
+
+  <g transform="translate(1311 366)">
+    <rect width="416" height="104" rx="15" fill="#effbf7" stroke="#bde4d8"/>
+    <rect x="16" y="15" width="82" height="22" rx="11" fill="#188e78"/>
+    <text x="57" y="30" text-anchor="middle" class="white pill">BACKEND</text>
+    <text x="18" y="61" class="ink cardTitle">Node.js + Express</text>
+    <text x="18" y="82" class="muted cardBody">REST routes · CORS · JSON middleware</text>
+    <text x="18" y="98" class="muted cardBody">JWT auth · Node crypto / scrypt</text>
+  </g>
+
+  <g transform="translate(1311 488)">
+    <rect width="416" height="104" rx="15" fill="#fff5e5" stroke="#f0d39d"/>
+    <rect x="16" y="15" width="100" height="22" rx="11" fill="#c68118"/>
+    <text x="66" y="30" text-anchor="middle" class="white pill">REAL-TIME DATA</text>
+    <text x="18" y="61" class="ink cardTitle">Socket.IO + in-memory store</text>
+    <text x="18" y="82" class="muted cardBody">Occupancy state · prompts · notifications</text>
+    <text x="18" y="98" class="muted cardBody">Audit records · arrival events</text>
+  </g>
+
+  <g transform="translate(1311 610)">
+    <rect width="416" height="104" rx="15" fill="#f2efff" stroke="#d7cef7"/>
+    <rect x="16" y="15" width="83" height="22" rx="11" fill="#6c54bc"/>
+    <text x="57" y="30" text-anchor="middle" class="white pill">MOBILE</text>
+    <text x="18" y="61" class="ink cardTitle">Capacitor 8 + Android</text>
+    <text x="18" y="82" class="muted cardBody">Gradle · Android SDK 36 · Java 21</text>
+    <text x="18" y="98" class="muted cardBody">GitHub Actions debug APK pipeline</text>
+  </g>
+
+  <text x="1311" y="756" class="muted tiny">MVP STORAGE: IN-MEMORY · PRODUCTION: POSTGRES / FIRESTORE</text>
+
+  <!-- Flow connectors -->
+  <path d="M252 205 H276 V300 H300" class="flow"/>
+  <path d="M252 305 H276 V310 H300" class="flowMint"/>
+  <path d="M252 405 H276 V350 H300" class="flow"/>
+  <path d="M505 307 H540" class="flow"/>
+  <path d="M745 275 H760 V234 H780" class="flowMint"/>
+  <path d="M745 335 H760 V390 H780" class="flow"/>
+  <path d="M990 234 H1010 V295 H1030" class="flowMint"/>
+  <path d="M990 390 H1010 V330 H1030" class="flow"/>
+  <path d="M1138 400 V440" class="flow"/>
+  <path d="M1138 600 V640" class="flowMint"/>
+  <path d="M402 370 V480 H402 V500" class="flowSoft"/>
+  <path d="M505 575 H540" class="flow"/>
+  <path d="M745 575 H780" class="flow"/>
+  <path d="M990 575 H1010 V520 H1030" class="flowSoft"/>
+  <path d="M930 450 V520 H930" class="flowSoft"/>
+
+  <!-- Numbered directional hints -->
+  <text x="262" y="192" class="muted tiny">ACCOUNT</text>
+  <text x="512" y="296" class="muted tiny">RESOLVE</text>
+  <text x="751" y="218" class="muted tiny">INTENT</text>
+  <text x="1010" y="285" class="muted tiny">VALIDATE</text>
+</svg>
