@@ -2,6 +2,11 @@
   "appId": "edu.campus.seatline",
   "appName": "Campus Seatline",
   "webDir": "dist",
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["sound", "alert"]
+    }
+  },
   "server": {
     "androidScheme": "http"
   }

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   getDb, busById, stopById, busesForStops, sanitizeUser, riderAuthorityBusIds, activeAssignments,
   effectiveStopIdsForUser, dailyStopOverrideForUser, setDailyStopOverride, clearDailyStopOverride,
-  pushNotification
+  pushNotification, upsertDeviceToken, deactivateDeviceToken
 } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import {
@@ -15,6 +15,44 @@ import { emitToUser } from '../realtime.js'
 
 const router = Router()
 router.use(authenticate, requireRole('rider'))
+
+function validFcmToken(value) {
+  return typeof value === 'string' && value.trim().length >= 20 && value.trim().length <= 4096
+}
+
+router.post('/device-tokens', (req, res) => {
+  const { fcmToken, previousToken, platform = 'android' } = req.body || {}
+  if (!validFcmToken(fcmToken)) return res.status(400).json({ error: 'A valid FCM token is required' })
+  if (previousToken !== undefined && previousToken !== null && !validFcmToken(previousToken)) {
+    return res.status(400).json({ error: 'previousToken must be a valid FCM token' })
+  }
+  if (platform !== 'android') return res.status(400).json({ error: 'Only Android device tokens are supported' })
+  const deviceToken = upsertDeviceToken({
+    userId: req.user.id,
+    fcmToken: fcmToken.trim(),
+    previousToken: previousToken?.trim() || null,
+    platform
+  })
+  res.json({
+    deviceToken: {
+      id: deviceToken.id,
+      platform: deviceToken.platform,
+      active: deviceToken.active,
+      lastSeenAt: deviceToken.lastSeenAt
+    }
+  })
+})
+
+router.delete('/device-tokens', (req, res) => {
+  const { fcmToken } = req.body || {}
+  if (!validFcmToken(fcmToken)) return res.status(400).json({ error: 'A valid FCM token is required' })
+  const deviceToken = deactivateDeviceToken({
+    userId: req.user.id,
+    fcmToken: fcmToken.trim(),
+    reason: 'logout'
+  })
+  res.json({ ok: true, deactivated: Boolean(deviceToken) })
+})
 
 router.get('/overview', (req, res) => {
   const db = getDb()

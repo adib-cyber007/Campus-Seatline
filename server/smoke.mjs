@@ -2,6 +2,7 @@ import { app } from './src/app.js'
 import { getDb, occupancyOf, effectiveStopIdsForUser } from './src/db.js'
 import { handleDetection, snapshot } from './src/services/occupancy.js'
 import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
+import { sendPushIfUserOffline } from './src/services/push.js'
 import { setIo } from './src/realtime.js'
 
 const server = app.listen(0)
@@ -512,6 +513,98 @@ async function main() {
     overriddenOverview.user.stopIds[0] === transferStop.data.stop.id)
   check('prompts from the former overridden stop are removed from active view',
     !overriddenOverview.prompts.some(promptItem => promptItem.stopId === singleStop.data.stop.id))
+
+  console.log('FEATURE: Android FCM device-token lifecycle and offline fallback')
+
+  const fcmTokenA = 'fcm-test-token-a-12345678901234567890'
+  const fcmTokenB = 'fcm-test-token-b-12345678901234567890'
+  const tokenRegister = await call('/rider/device-tokens', {
+    method: 'POST', token: rider, body: { fcmToken: fcmTokenA, platform: 'android' }
+  })
+  const registeredTokenId = tokenRegister.data.deviceToken.id
+  check('post-login device token is registered for the authenticated rider',
+    tokenRegister.status === 200 && tokenRegister.data.deviceToken.active === true &&
+    getDb().deviceTokens.some(item => item.id === registeredTokenId && item.userId === login.data.user.id))
+
+  const repeatedRegister = await call('/rider/device-tokens', {
+    method: 'POST', token: rider, body: { fcmToken: fcmTokenA, platform: 'android' }
+  })
+  check('re-registering the same FCM token is idempotent',
+    repeatedRegister.data.deviceToken.id === registeredTokenId &&
+    getDb().deviceTokens.filter(item => item.userId === login.data.user.id).length === 1)
+
+  const rotatedRegister = await call('/rider/device-tokens', {
+    method: 'POST', token: rider,
+    body: { fcmToken: fcmTokenB, previousToken: fcmTokenA, platform: 'android' }
+  })
+  check('FCM token rotation updates the existing row instead of duplicating it',
+    rotatedRegister.data.deviceToken.id === registeredTokenId &&
+    getDb().deviceTokens.filter(item => item.userId === login.data.user.id).length === 1 &&
+    getDb().deviceTokens.find(item => item.id === registeredTokenId).fcmToken === fcmTokenB)
+
+  const emittedDuringPushTests = []
+  const socketIo = rooms => ({
+    sockets: { adapter: { rooms } },
+    emit(event, payload) { emittedDuringPushTests.push({ room: 'all', event, payload }) },
+    to(room) {
+      return { emit: (event, payload) => emittedDuringPushTests.push({ room, event, payload }) }
+    }
+  })
+  let transportCalls = 0
+  const successfulTransport = async message => {
+    transportCalls++
+    check('FCM payload includes canonical string identifiers and Android channel',
+      message.data.event_type === 'ble_confirmation_prompt' &&
+      message.data.event_id === 'prompt-test-id' &&
+      message.data.rider_id === login.data.user.id &&
+      message.android.notification.channelId === 'seatline-prompts')
+    return { successCount: 1, failureCount: 0, responses: [{ success: true }] }
+  }
+
+  setIo(socketIo(new Map([[`user:${login.data.user.id}`, new Set(['socket-1'])]])))
+  const connectedDelivery = await sendPushIfUserOffline({
+    userId: login.data.user.id,
+    title: 'Test prompt', body: 'Are you boarding?',
+    data: { event_type: 'ble_confirmation_prompt', event_id: 'prompt-test-id', bus_id: bus1.busId, stop_id: bus1.stopIds[0] }
+  }, { transport: successfulTransport })
+  check('a socket-connected rider does not receive a redundant FCM push',
+    connectedDelivery.skipped === 'socket_connected' && transportCalls === 0)
+
+  setIo(socketIo(new Map()))
+  const offlineDelivery = await sendPushIfUserOffline({
+    userId: login.data.user.id,
+    title: 'Test prompt', body: 'Are you boarding?',
+    data: { event_type: 'ble_confirmation_prompt', event_id: 'prompt-test-id', bus_id: bus1.busId, stop_id: bus1.stopIds[0] }
+  }, { transport: successfulTransport })
+  check('an offline rider receives the FCM fallback once',
+    offlineDelivery.sent === 1 && transportCalls === 1)
+
+  await sendPushIfUserOffline({
+    userId: login.data.user.id,
+    title: 'Invalid token test', body: 'Test',
+    data: { event_type: 'ble_confirmation_prompt', event_id: 'invalid-token-test' }
+  }, {
+    transport: async () => ({
+      successCount: 0, failureCount: 1,
+      responses: [{ success: false, error: { code: 'messaging/registration-token-not-registered' } }]
+    })
+  })
+  check('FCM-invalid tokens are automatically retired',
+    getDb().deviceTokens.find(item => item.id === registeredTokenId).active === false)
+
+  await call('/rider/device-tokens', {
+    method: 'POST', token: rider, body: { fcmToken: fcmTokenB, platform: 'android' }
+  })
+  const logoutToken = await call('/rider/device-tokens', {
+    method: 'DELETE', token: rider, body: { fcmToken: fcmTokenB }
+  })
+  check('logout deactivates the current device token and stops future pushes',
+    logoutToken.status === 200 && logoutToken.data.deactivated === true &&
+    !getDb().deviceTokens.some(item => item.userId === login.data.user.id && item.active))
+  const riderTokenWrite = await call('/rider/device-tokens', {
+    method: 'POST', token: adminTok, body: { fcmToken: fcmTokenA, platform: 'android' }
+  })
+  check('Admins cannot register rider device tokens', riderTokenWrite.status === 403)
 
   console.log('CHANGE 4: admin-only read-only AI query assistant')
 

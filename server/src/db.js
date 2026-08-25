@@ -28,7 +28,8 @@ const db = {
   notifications: [],
   overrides: [],
   dailyStopOverrides: [],
-  autoHoldEvaluations: []
+  autoHoldEvaluations: [],
+  deviceTokens: []
 }
 
 export const nextId = uid
@@ -71,6 +72,79 @@ export const busById = id => db.buses.find(b => b.id === id)
 export const stopById = id => db.stops.find(s => s.id === id)
 export const busesForStops = stopIds =>
   db.buses.filter(b => b.stopIds.some(s => stopIds.includes(s)))
+
+export function activeDeviceTokensForUser(userId) {
+  return db.deviceTokens.filter(token => token.userId === userId && token.active)
+}
+
+export function upsertDeviceToken({ userId, fcmToken, previousToken = null, platform = 'android' }) {
+  const now = new Date().toISOString()
+
+  // A physical Firebase token must never remain active for two rider accounts.
+  for (const token of db.deviceTokens) {
+    if (token.fcmToken === fcmToken && token.userId !== userId && token.active) {
+      token.active = false
+      token.deactivatedAt = now
+      token.deactivationReason = 'registered_to_another_rider'
+      token.updatedAt = now
+    }
+  }
+
+  let record = db.deviceTokens.find(token => token.userId === userId && token.fcmToken === fcmToken)
+  if (previousToken && previousToken !== fcmToken) {
+    const previousRecord = db.deviceTokens.find(token => token.userId === userId && token.fcmToken === previousToken)
+    if (!record && previousRecord) {
+      record = previousRecord
+      record.fcmToken = fcmToken
+    } else if (record && previousRecord && previousRecord !== record && previousRecord.active) {
+      previousRecord.active = false
+      previousRecord.deactivatedAt = now
+      previousRecord.deactivationReason = 'fcm_token_rotated'
+      previousRecord.updatedAt = now
+    }
+  }
+
+  if (!record) {
+    record = {
+      id: uid(), userId, fcmToken, platform,
+      active: true, createdAt: now, updatedAt: now, lastSeenAt: now
+    }
+    db.deviceTokens.push(record)
+  } else {
+    record.platform = platform
+    record.active = true
+    record.lastSeenAt = now
+    record.updatedAt = now
+    delete record.deactivatedAt
+    delete record.deactivationReason
+  }
+  return record
+}
+
+export function deactivateDeviceToken({ userId, fcmToken, reason = 'logout' }) {
+  const record = db.deviceTokens.find(token =>
+    token.userId === userId && token.fcmToken === fcmToken && token.active
+  )
+  if (!record) return null
+  const now = new Date().toISOString()
+  record.active = false
+  record.deactivatedAt = now
+  record.deactivationReason = reason
+  record.updatedAt = now
+  return record
+}
+
+export function deactivateDeviceTokenValue(fcmToken, reason = 'invalid_fcm_token') {
+  const now = new Date().toISOString()
+  const records = db.deviceTokens.filter(token => token.fcmToken === fcmToken && token.active)
+  for (const record of records) {
+    record.active = false
+    record.deactivatedAt = now
+    record.deactivationReason = reason
+    record.updatedAt = now
+  }
+  return records
+}
 
 const ACTIVE_REPORT_STATES = new Set(['soft_hold', 'seats_occupied'])
 

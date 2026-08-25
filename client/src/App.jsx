@@ -5,6 +5,7 @@ import LoginPage from './components/LoginPage'
 import RiderPage from './components/RiderPage'
 import AdminPage from './components/AdminPage'
 import Toasts from './components/Toasts'
+import { startRiderPush, unregisterRiderPush } from './pushNotifications'
 
 function BusMark() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
   const [auditFeed, setAuditFeed] = useState(null)
   const [refreshTick, setRefreshTick] = useState(0)
   const [connectionStatus, setConnectionStatus] = useState('connecting')
+  const [loggingOut, setLoggingOut] = useState(false)
 
   const toast = useCallback((message, type = 'info') => {
     const id = Math.random().toString(36).slice(2)
@@ -66,6 +68,28 @@ export default function App() {
     return () => s.close()
   }, [user?.id])
 
+  useEffect(() => {
+    if (user?.role !== 'rider') return
+    startRiderPush({
+      userId: user.id,
+      onStatus: toast,
+      onResponse: () => setRefreshTick(tick => tick + 1)
+    }).catch(error => toast(`Push setup failed: ${error.message}`, 'error'))
+  }, [user?.id])
+
+  const logout = async () => {
+    if (loggingOut) return
+    setLoggingOut(true)
+    try {
+      if (user?.role === 'rider') await unregisterRiderPush()
+    } catch (error) {
+      toast(`Device notification logout failed: ${error.message}`, 'error')
+    } finally {
+      setToken(null)
+      location.reload()
+    }
+  }
+
   if (booting) return <div className="boot">Loading…</div>
 
   if (!user) {
@@ -101,8 +125,8 @@ export default function App() {
             <strong>{user.name}</strong>
             <span>{user.role === 'admin' ? 'Transport admin' : 'Rider'}</span>
           </span>
-          <button className="btn quiet logout" onClick={() => { setToken(null); location.reload() }} aria-label="Log out">
-            Log out
+          <button className="btn quiet logout" disabled={loggingOut} onClick={logout} aria-label="Log out">
+            {loggingOut ? 'Logging out…' : 'Log out'}
           </button>
         </div>
       </header>

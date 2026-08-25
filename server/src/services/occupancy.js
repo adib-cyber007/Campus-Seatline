@@ -5,6 +5,7 @@ import {
 } from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
+import { sendPushIfUserOffline } from './push.js'
 
 export const PROMPT_TTL_MS = 120000
 
@@ -188,6 +189,17 @@ export function applySoftHold(user, bus, response, { source = 'manual', stopId: 
     const snap = snapshot().find(s => s.busId === bus.id)
     if (source === 'auto') {
       feedback(user.id, `You've been automatically soft-held on ${bus.name} (your only bus option today) — tap Release if you're not traveling.`, 'auto_hold')
+      void sendPushIfUserOffline({
+        userId: user.id,
+        title: `Soft Hold on ${bus.name}`,
+        body: `You've been automatically held on your only bus option today. Open Seatline to release it if you're not travelling.`,
+        data: {
+          event_type: 'soft_hold_prompt',
+          event_id: transition.record.id,
+          bus_id: bus.id,
+          stop_id: stopId
+        }
+      })
     } else if (transition.released) {
       feedback(user.id, `Your Soft Hold moved to ${bus.name} — ${snap.availableSeats} seats effectively remaining.`)
     } else {
@@ -406,6 +418,17 @@ export function applyBleResponse(user, prompt, response) {
     for (const uid of recipients) {
       const n = pushNotification(uid, `Bus ${bus.name} has reported at ${stop.name}.`, 'arrival')
       emitToUser(uid, 'notification', n)
+      void sendPushIfUserOffline({
+        userId: uid,
+        title: `${bus.name} reported at ${stop.name}`,
+        body: 'Open Campus Seatline for the latest seat availability.',
+        data: {
+          event_type: 'bus_reported_at_stop',
+          event_id: event.id,
+          bus_id: bus.id,
+          stop_id: stop.id
+        }
+      })
     }
     emitAdmins('arrival', {
       id: event.id, busId: bus.id, busName: bus.name,
@@ -490,6 +513,17 @@ export function handleDetection({ userId, busId, stopId }) {
   const n = pushNotification(userId, `Have you boarded ${bus.name} at ${stop.name}?`, 'prompt')
   emitToUser(userId, 'notification', n)
   emitToUser(userId, 'prompts', promptsForUser(userId))
+  void sendPushIfUserOffline({
+    userId,
+    title: `${bus.name} at ${stop.name}`,
+    body: 'Have you boarded? Open Seatline to answer Yes or No.',
+    data: {
+      event_type: 'ble_confirmation_prompt',
+      event_id: prompt.id,
+      bus_id: bus.id,
+      stop_id: stop.id
+    }
+  })
   return prompt
 }
 
