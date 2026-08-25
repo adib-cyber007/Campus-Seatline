@@ -702,6 +702,21 @@ td small { display: block; margin-top: 2px; color: var(--muted); font-size: .65r
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .4; } }
 @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } }
+@keyframes demand-in { from { background: #fff1d6; transform: translateY(-4px); } }
+
+.unmet-demand-panel { border-color: #ead5aa; }
+.unmet-demand-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 14px; }
+.unmet-demand-counts > div { display: flex; align-items: baseline; gap: 9px; padding: 13px 15px; border: 1px solid #ead5aa; border-radius: 12px; background: #fffaf0; }
+.unmet-demand-counts strong { color: #9a5400; font: 700 1.55rem var(--font-data); }
+.unmet-demand-counts span { color: var(--muted); font-size: .78rem; }
+.unmet-demand-list { max-height: 300px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.unmet-demand-list article { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-height: 58px; padding: 9px 13px; border-bottom: 1px solid var(--line); }
+.unmet-demand-list article:last-child { border-bottom: 0; }
+.unmet-demand-list article.is-new { animation: demand-in 1.8s ease-out; }
+.unmet-demand-list article > div { display: flex; min-width: 0; flex-direction: column; }
+.unmet-demand-list article > div span, .unmet-demand-list time { color: var(--muted); font-size: .75rem; }
+.demand-alert { display: grid; width: 26px; height: 26px; place-items: center; border-radius: 50%; color: #8a4a00; background: #ffe7b7; font-weight: 800; }
+.unmet-demand-list .empty-inline { margin: 0; padding: 20px; color: var(--muted); }
 
 @media (max-width: 980px) {
   .auth-stage { grid-template-columns: .8fr 1.2fr; }

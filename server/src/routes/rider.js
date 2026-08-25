@@ -75,7 +75,8 @@ router.post('/soft-hold', (req, res) => {
     logRejectedBoarded({ userId: req.user.id, busId: bus.id, stopId: effectiveStopIds[0] || null, channel: 'soft_intent' })
     return res.status(409).json({ error: `You've already been counted as boarded on ${bus.name} for this trip — one report per rider per trip` })
   }
-  const result = applySoftHold(req.user, bus, response)
+  const reportingStopId = effectiveStopIds.find(stopId => bus.stopIds.includes(stopId)) || effectiveStopIds[0] || null
+  const result = applySoftHold(req.user, bus, response, { stopId: reportingStopId })
   if (!result.ok) return res.status(result.status || 409).json({ error: result.error })
   res.json({ ok: true, changed: result.changed })
 })

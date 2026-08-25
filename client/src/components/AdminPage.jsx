@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 
 const STOP_PAGE_SIZE = 8
@@ -68,9 +68,87 @@ function OrderedStopPicker({ all, value, onChange }) {
   )
 }
 
-function OverviewTab({ data, occupancy }) {
+function UnmetDemandPanel({ liveEvents, toast }) {
+  const [panel, setPanel] = useState(null)
+  const [highlightIds, setHighlightIds] = useState(new Set())
+  const seenIds = useRef(new Set())
+
+  const load = () => api('/admin/unmet-demand?limit=100')
+    .then(result => {
+      result.events.forEach(event => seenIds.current.add(event.id))
+      setPanel(current => {
+        const byId = new Map([...(current?.events || []), ...result.events].map(event => [event.id, event]))
+        return { ...result, events: [...byId.values()].sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp))) }
+      })
+    })
+    .catch(error => toast(error.message, 'error'))
+
+  useEffect(() => {
+    load()
+    const timer = setInterval(load, 60000)
+    return () => clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!panel || liveEvents.length === 0) return
+    const fresh = liveEvents.filter(event => !seenIds.current.has(event.id))
+    if (fresh.length === 0) return
+    fresh.forEach(event => seenIds.current.add(event.id))
+    const now = Date.now()
+    const today = new Date()
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
+    setPanel(current => {
+      const byId = new Map([...fresh, ...current.events].map(event => [event.id, event]))
+      return {
+        ...current,
+        events: [...byId.values()].slice(0, 100),
+        counts: {
+          today: current.counts.today + fresh.filter(event => new Date(event.timestamp).getTime() >= todayStart).length,
+          last30Minutes: current.counts.last30Minutes + fresh.filter(event => new Date(event.timestamp).getTime() >= now - 30 * 60 * 1000).length
+        }
+      }
+    })
+    setHighlightIds(new Set(fresh.map(event => event.id)))
+    const timer = setTimeout(() => setHighlightIds(new Set()), 1800)
+    return () => clearTimeout(timer)
+  }, [liveEvents, panel === null])
+
+  return (
+    <section className="card wide admin-section unmet-demand-panel" aria-label="Unmet Demand">
+      <SectionHeading
+        eyebrow="Capacity signal"
+        title="Unmet Demand"
+        description="Rider attempts rejected only when every bus serving that stop was full."
+        action={<span className="status-label warning"><span aria-hidden="true">!</span> Live</span>}
+      />
+      {!panel ? (
+        <div className="loading-state compact"><span className="spinner dark" /> Loading demand events</div>
+      ) : (
+        <>
+          <div className="unmet-demand-counts" aria-label="Unmet demand totals">
+            <div><strong>{panel.counts.last30Minutes}</strong><span>Last {panel.windowMinutes} minutes</span></div>
+            <div><strong>{panel.counts.today}</strong><span>Today</span></div>
+          </div>
+          <div className="unmet-demand-list" role="log" aria-live="polite" aria-relevant="additions">
+            {panel.events.slice(0, 30).map(event => (
+              <article key={event.id} className={highlightIds.has(event.id) ? 'is-new' : ''}>
+                <span className="demand-alert" aria-hidden="true">!</span>
+                <div><strong>{event.stopName}</strong><span>{event.busLabel} · {event.riderDisplayName}</span></div>
+                <time dateTime={event.timestamp}>{new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+              </article>
+            ))}
+            {panel.events.length === 0 && <p className="empty-inline">No capacity-related turnaways have been recorded today.</p>}
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+function OverviewTab({ data, occupancy, unmetDemandFeed, toast }) {
   const occFor = b => occupancy[b.id] || b.occ || {}
   return (
+    <>
     <section className="card wide admin-section">
       <SectionHeading
         eyebrow="Live operations"
@@ -103,6 +181,8 @@ function OverviewTab({ data, occupancy }) {
         </tbody>
       </table></div>
     </section>
+    <UnmetDemandPanel liveEvents={unmetDemandFeed} toast={toast} />
+    </>
   )
 }
 
@@ -681,7 +761,7 @@ const adminTabs = [
   ['incharge', 'Incharge'], ['users', 'Users'], ['audit', 'Audit log'], ['assistant', 'AI assistant']
 ]
 
-export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, connectionStatus }) {
+export default function AdminPage({ toast, occupancy, auditFeed, unmetDemandFeed, refreshTick, connectionStatus }) {
   const [tab, setTab] = useState('overview')
   const [data, setData] = useState(null)
 
@@ -726,7 +806,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         ))}
       </nav>
       <div className="admin-content grid">
-        {tab === 'overview' && <OverviewTab data={data} occupancy={occupancy} />}
+        {tab === 'overview' && <OverviewTab data={data} occupancy={occupancy} unmetDemandFeed={unmetDemandFeed} toast={toast} />}
         {tab === 'stops' && <StopsTab data={data} reload={load} toast={toast} />}
         {tab === 'buses' && <BusesTab data={data} reload={load} toast={toast} />}
         {tab === 'incharge' && <AssignmentsTab data={data} reload={load} toast={toast} />}

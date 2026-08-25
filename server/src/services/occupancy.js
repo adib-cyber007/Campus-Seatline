@@ -1,7 +1,7 @@
 import {
   getDb, nextId, todayKey, occupancyOf, pushNotification, busById, stopById, userById,
   busesForStops, activeReportForUser, transitionRiderReport, releaseRiderSoftHold,
-  effectiveStopIdsForUser
+  effectiveStopIdsForUser, createUnmetDemandEvent
 } from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
@@ -23,6 +23,36 @@ function syncRiderState(userId) {
 function feedback(userId, message, type = 'feedback') {
   const n = pushNotification(userId, message, type)
   emitToUser(userId, 'notification', n)
+}
+
+export function unmetDemandDisplay(event) {
+  return {
+    ...event,
+    riderDisplayName: userById(event.riderId)?.name || event.riderId,
+    stopName: stopById(event.stopId)?.name || event.stopId,
+    busLabel: busById(event.busId)?.name || event.busId
+  }
+}
+
+export function captureUnmetDemand({ user, stopId, bus }) {
+  if (!user || !stopId || !bus || !bus.stopIds.includes(stopId)) return null
+  const servingBuses = busesForStops([stopId])
+  if (servingBuses.length === 0) return null
+
+  const currentByBus = new Map(snapshot().map(item => [item.busId, item]))
+  if (!servingBuses.every(candidate => (currentByBus.get(candidate.id)?.availableSeats ?? 0) <= 0)) {
+    return null
+  }
+
+  const event = createUnmetDemandEvent({
+    riderId: user.id,
+    stopId,
+    busId: bus.id,
+    availableSeatsAtTime: currentByBus.get(bus.id)?.availableSeats ?? 0
+  })
+  const payload = unmetDemandDisplay(event)
+  emitAdmins('unmet_demand:new', payload)
+  return payload
 }
 
 const clamp = (n, min, max) => Math.min(max, Math.max(min, n))
@@ -159,6 +189,7 @@ export function applySoftHold(user, bus, response, { source = 'manual', stopId: 
         outcome: 'rejected_no_availability', message: 'No seats are currently available'
       })
       feedback(user.id, `${bus.name} currently has no seats available, so a Soft Hold was not added.`, 'error')
+      captureUnmetDemand({ user, stopId, bus })
       broadcastAll()
       syncRiderState(user.id)
       return { ok: false, status: 409, error: `${bus.name} currently has no seats available` }
@@ -347,6 +378,7 @@ export function applyBleResponse(user, prompt, response) {
         outcome: 'rejected_no_availability', message: 'No seats are currently available'
       })
       feedback(user.id, `${bus.name} currently has no seats available, so you were not added.`, 'error')
+      captureUnmetDemand({ user, stopId: stop.id, bus })
       return finish({
         ok: false, status: 409, error: `${bus.name} currently has no seats available`,
         promoted: false, arrivalCreated: false

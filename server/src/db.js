@@ -28,7 +28,12 @@ const db = {
   notifications: [],
   overrides: [],
   dailyStopOverrides: [],
-  autoHoldEvaluations: []
+  autoHoldEvaluations: [],
+  unmetDemandEvents: [],
+  unmetDemandIndexes: {
+    byStop: new Map(),
+    byBus: new Map()
+  }
 }
 
 export const nextId = uid
@@ -71,6 +76,45 @@ export const busById = id => db.buses.find(b => b.id === id)
 export const stopById = id => db.stops.find(s => s.id === id)
 export const busesForStops = stopIds =>
   db.buses.filter(b => b.stopIds.some(s => stopIds.includes(s)))
+
+function addToIndex(index, key, event) {
+  const items = index.get(key) || []
+  items.push(event)
+  index.set(key, items)
+}
+
+export function createUnmetDemandEvent({ riderId, stopId, busId, availableSeatsAtTime }) {
+  if (!userById(riderId) || !stopById(stopId) || !busById(busId)) {
+    throw new Error('Unmet demand requires a valid rider, stop and bus')
+  }
+  const now = new Date().toISOString()
+  const event = {
+    id: uid(),
+    riderId,
+    stopId,
+    busId,
+    timestamp: now,
+    availableSeatsAtTime: Number(availableSeatsAtTime),
+    createdAt: now
+  }
+  db.unmetDemandEvents.push(event)
+  addToIndex(db.unmetDemandIndexes.byStop, stopId, event)
+  addToIndex(db.unmetDemandIndexes.byBus, busId, event)
+  return event
+}
+
+export function queryUnmetDemandEvents({ since, stopId, busId } = {}) {
+  let events = db.unmetDemandEvents
+  if (stopId) events = db.unmetDemandIndexes.byStop.get(stopId) || []
+  if (busId) {
+    const busEvents = db.unmetDemandIndexes.byBus.get(busId) || []
+    events = stopId ? events.filter(event => event.busId === busId) : busEvents
+  }
+  const sinceMs = since ? new Date(since).getTime() : null
+  return events
+    .filter(event => sinceMs === null || new Date(event.timestamp).getTime() >= sinceMs)
+    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+}
 
 const ACTIVE_REPORT_STATES = new Set(['soft_hold', 'seats_occupied'])
 

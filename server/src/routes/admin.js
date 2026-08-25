@@ -1,7 +1,7 @@
 import { Router } from 'express'
-import { getDb, nextId, busById, stopById, sanitizeUser } from '../db.js'
+import { getDb, nextId, busById, stopById, sanitizeUser, queryUnmetDemandEvents } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
-import { snapshot } from '../services/occupancy.js'
+import { snapshot, unmetDemandDisplay } from '../services/occupancy.js'
 import { auditSnapshot } from '../services/audit.js'
 import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
@@ -53,6 +53,34 @@ function enrichAssignment(a) {
 function refreshClients(reason) {
   emitAll('refresh', { reason })
 }
+
+router.get('/unmet-demand', (req, res) => {
+  const { since, stopId, busId } = req.query
+  if (since && Number.isNaN(new Date(since).getTime())) {
+    return res.status(400).json({ error: 'since must be a valid date-time' })
+  }
+  const requestedLimit = Number(req.query.limit ?? 100)
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 200) {
+    return res.status(400).json({ error: 'limit must be an integer between 1 and 200' })
+  }
+
+  const allEvents = queryUnmetDemandEvents()
+  const now = new Date()
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const recentStart = now.getTime() - 30 * 60 * 1000
+  const events = queryUnmetDemandEvents({ since, stopId, busId })
+    .slice(0, requestedLimit)
+    .map(unmetDemandDisplay)
+
+  res.json({
+    events,
+    counts: {
+      today: allEvents.filter(event => new Date(event.timestamp).getTime() >= todayStart).length,
+      last30Minutes: allEvents.filter(event => new Date(event.timestamp).getTime() >= recentStart).length
+    },
+    windowMinutes: 30
+  })
+})
 
 router.get('/overview', (req, res) => {
   const db = getDb()

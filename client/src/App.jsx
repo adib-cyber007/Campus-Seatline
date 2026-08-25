@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, getToken, setToken } from './api'
 import { connectSocket } from './socket'
 import LoginPage from './components/LoginPage'
@@ -25,6 +25,9 @@ export default function App() {
   const [occupancy, setOccupancy] = useState({})
   const [prompts, setPrompts] = useState(null)
   const [auditFeed, setAuditFeed] = useState(null)
+  const [unmetDemandFeed, setUnmetDemandFeed] = useState([])
+  const unmetDemandQueue = useRef([])
+  const unmetDemandTimer = useRef(null)
   const [refreshTick, setRefreshTick] = useState(0)
   const [connectionStatus, setConnectionStatus] = useState('connecting')
 
@@ -62,8 +65,31 @@ export default function App() {
     s.on('prompts', setPrompts)
     s.on('arrival', e => toast(`${e.busName} reported at ${e.stopName}`, 'arrival'))
     s.on('audit', items => setAuditFeed(items))
+    s.on('unmet_demand:new', event => {
+      unmetDemandQueue.current.push(event)
+      if (unmetDemandTimer.current) return
+      unmetDemandTimer.current = setTimeout(() => {
+        const batch = unmetDemandQueue.current.splice(0)
+        unmetDemandTimer.current = null
+        setUnmetDemandFeed(current => {
+          const byId = new Map([...batch, ...current].map(item => [item.id, item]))
+          return [...byId.values()].slice(0, 200)
+        })
+        toast(
+          batch.length === 1
+            ? `Unmet demand at ${batch[0].stopName}`
+            : `${batch.length} new unmet-demand reports`,
+          'warning'
+        )
+      }, 250)
+    })
     s.on('refresh', () => setRefreshTick(t => t + 1))
-    return () => s.close()
+    return () => {
+      s.close()
+      if (unmetDemandTimer.current) clearTimeout(unmetDemandTimer.current)
+      unmetDemandTimer.current = null
+      unmetDemandQueue.current = []
+    }
   }, [user?.id])
 
   if (booting) return <div className="boot">Loading…</div>
@@ -114,6 +140,7 @@ export default function App() {
           prompts={prompts}
           notifications={notifications}
           auditFeed={auditFeed}
+          unmetDemandFeed={unmetDemandFeed}
           refreshTick={refreshTick}
           connectionStatus={connectionStatus}
         />

@@ -1,6 +1,6 @@
 import { app } from './src/app.js'
-import { getDb, occupancyOf, effectiveStopIdsForUser } from './src/db.js'
-import { handleDetection, snapshot } from './src/services/occupancy.js'
+import { getDb, occupancyOf, effectiveStopIdsForUser, queryUnmetDemandEvents } from './src/db.js'
+import { handleDetection, snapshot, captureUnmetDemand } from './src/services/occupancy.js'
 import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
 import { setIo } from './src/realtime.js'
 
@@ -512,6 +512,91 @@ async function main() {
     overriddenOverview.user.stopIds[0] === transferStop.data.stop.id)
   check('prompts from the former overridden stop are removed from active view',
     !overriddenOverview.prompts.some(promptItem => promptItem.stopId === singleStop.data.stop.id))
+
+  console.log('FEATURE: unmet-demand detection and live Admin delivery')
+
+  const demandStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Unmet Demand Gate', timeline: [], busIds: [] }
+  })
+  const demandBusA = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Demand-A', capacity: 1, stopIds: [demandStop.data.stop.id] }
+  })
+  const demandBusB = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Demand-B', capacity: 1, stopIds: [demandStop.data.stop.id] }
+  })
+  const demandRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Demand Rider', email: 'demand-rider@campus.edu', password: 'pass1234', role: 'rider', stopIds: [demandStop.data.stop.id] }
+  })
+  const demandStart = getDb().unmetDemandEvents.length
+  occupancyOf(demandBusA.data.bus.id).manualAdjustment = 1
+  const mixedCapacity = await call('/rider/soft-hold', {
+    method: 'POST', token: demandRider.data.token,
+    body: { busId: demandBusA.data.bus.id, response: 'yes' }
+  })
+  check('target-bus rejection is not unmet demand while another mapped bus has a seat',
+    mixedCapacity.status === 409 && getDb().unmetDemandEvents.length === demandStart)
+
+  occupancyOf(demandBusB.data.bus.id).manualAdjustment = 1
+  const fullCapacity = await call('/rider/soft-hold', {
+    method: 'POST', token: demandRider.data.token,
+    body: { busId: demandBusA.data.bus.id, response: 'yes' }
+  })
+  check('all-buses-full rejection creates exactly one unmet-demand row',
+    fullCapacity.status === 409 && getDb().unmetDemandEvents.length === demandStart + 1)
+  const demandEvent = getDb().unmetDemandEvents.at(-1)
+  check('unmet-demand record stores server snapshot and required relationships',
+    demandEvent.riderId === demandRider.data.user.id &&
+    demandEvent.stopId === demandStop.data.stop.id &&
+    demandEvent.busId === demandBusA.data.bus.id &&
+    demandEvent.availableSeatsAtTime === 0 &&
+    Boolean(demandEvent.id && demandEvent.timestamp && demandEvent.createdAt))
+  check('stop and bus indexes resolve the same persisted event',
+    queryUnmetDemandEvents({ stopId: demandStop.data.stop.id })[0]?.id === demandEvent.id &&
+    queryUnmetDemandEvents({ busId: demandBusA.data.bus.id })[0]?.id === demandEvent.id)
+
+  const realtimeDemand = realtimeEvents.find(item =>
+    item.room === 'role:admin' && item.event === 'unmet_demand:new' && item.payload.id === demandEvent.id)
+  check('persisted event is emitted immediately to the existing Admin room with display fields',
+    realtimeDemand?.payload.stopName === 'Unmet Demand Gate' &&
+    realtimeDemand?.payload.busLabel === 'Demand-A' &&
+    realtimeDemand?.payload.riderDisplayName === 'Demand Rider')
+
+  const demandHistory = await call('/admin/unmet-demand?limit=20', { token: adminTok })
+  const demandReload = await call('/admin/unmet-demand?limit=20', { token: adminTok })
+  check('Admin history endpoint returns the persisted live event and counts',
+    demandHistory.status === 200 && demandHistory.data.events.some(event => event.id === demandEvent.id) &&
+    demandHistory.data.counts.today >= 1 && demandHistory.data.counts.last30Minutes >= 1)
+  check('Admin refresh history is stable and contains no duplicate rows',
+    demandReload.data.events.filter(event => event.id === demandEvent.id).length === 1 &&
+    demandReload.data.events.length === demandHistory.data.events.length)
+  const riderDemandHistory = await call('/admin/unmet-demand', { token: demandRider.data.token })
+  check('unmet-demand history remains Admin-only', riderDemandHistory.status === 403)
+
+  const outageStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok,
+    body: { name: 'No Service Gate', timeline: [], busIds: [] }
+  })
+  const beforeOutageCheck = getDb().unmetDemandEvents.length
+  const outageResult = captureUnmetDemand({
+    user: demandRider.data.user,
+    stopId: outageStop.data.stop.id,
+    bus: demandBusA.data.bus
+  })
+  check('a stop with zero assigned buses is not classified as unmet demand',
+    outageResult === null && getDb().unmetDemandEvents.length === beforeOutageCheck)
+
+  const bleDemand = await call('/rider/ble/simulate', {
+    method: 'POST', token: demandRider.data.token, body: { busId: demandBusA.data.bus.id }
+  })
+  const bleDemandResponse = await call(`/rider/prompts/${bleDemand.data.prompts[0].id}/respond`, {
+    method: 'POST', token: demandRider.data.token, body: { response: 'yes' }
+  })
+  check('capacity-rejected BLE board report also creates exactly one event',
+    bleDemandResponse.status === 409 && getDb().unmetDemandEvents.length === beforeOutageCheck + 1)
 
   console.log('CHANGE 4: admin-only read-only AI query assistant')
 
