@@ -51,11 +51,19 @@ export async function sendPushToUser({ userId, title, body, data }, { transport 
 
   const message = {
     tokens: records.map(record => record.fcmToken),
-    notification: { title, body },
-    data: stringData({ ...data, rider_id: userId }),
+    // Data-only delivery ensures SeatlineMessagingService receives the message
+    // even when Android has fully stopped the WebView. That service renders the
+    // notification and its authenticated Yes/No actions.
+    data: stringData({
+      ...data,
+      rider_id: userId,
+      title,
+      body,
+      channel_id: 'seatline-prompts',
+      native_actionable: data?.event_type === 'ble_confirmation_prompt'
+    }),
     android: {
-      priority: 'high',
-      notification: { channelId: 'seatline-prompts', visibility: 'public' }
+      priority: 'high'
     }
   }
   const response = await transport(message)

@@ -553,11 +553,16 @@ async function main() {
   let transportCalls = 0
   const successfulTransport = async message => {
     transportCalls++
-    check('FCM payload includes canonical string identifiers and Android channel',
+    check('FCM payload is high-priority data-only delivery for the native action service',
       message.data.event_type === 'ble_confirmation_prompt' &&
       message.data.event_id === 'prompt-test-id' &&
       message.data.rider_id === login.data.user.id &&
-      message.android.notification.channelId === 'seatline-prompts')
+      message.data.title === 'Test prompt' &&
+      message.data.body === 'Are you boarding?' &&
+      message.data.channel_id === 'seatline-prompts' &&
+      message.data.native_actionable === 'true' &&
+      message.android.priority === 'high' &&
+      !message.notification && !message.android.notification)
     return { successCount: 1, failureCount: 0, responses: [{ success: true }] }
   }
 

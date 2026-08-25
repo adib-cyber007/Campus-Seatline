@@ -516,12 +516,14 @@ export function handleDetection({ userId, busId, stopId }) {
   void sendPushIfUserOffline({
     userId,
     title: `${bus.name} at ${stop.name}`,
-    body: 'Have you boarded? Open Seatline to answer Yes or No.',
+    body: 'Have you boarded? Tap Yes or No below.',
     data: {
       event_type: 'ble_confirmation_prompt',
       event_id: prompt.id,
       bus_id: bus.id,
-      stop_id: stop.id
+      stop_id: stop.id,
+      expires_at: prompt.expiresAt,
+      expires_in_ms: Math.max(new Date(prompt.expiresAt).getTime() - Date.now(), 0)
     }
   })
   return prompt

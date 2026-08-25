@@ -1,10 +1,11 @@
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
-import { api } from './api'
+import { api, getApiOrigin, getToken } from './api'
 
 const TOKEN_KEY = 'seatline_fcm_token'
 let activeUserId = null
 let listenerHandles = []
+const NativeNotificationActions = registerPlugin('SeatlineNotificationActions')
 
 function isAndroidNative() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
@@ -22,6 +23,19 @@ export async function startRiderPush({ userId, onStatus, onResponse }) {
 
   activeUserId = userId
   await clearListeners()
+  const apiOrigin = getApiOrigin()
+  const authToken = getToken()
+  if (!apiOrigin || !authToken) {
+    activeUserId = null
+    throw new Error('Connect to the Campus Seatline server and sign in before enabling notifications')
+  }
+  try {
+    await NativeNotificationActions.configure({ apiOrigin, authToken, userId })
+  } catch (error) {
+    activeUserId = null
+    throw error
+  }
+
 
   listenerHandles = await Promise.all([
     PushNotifications.addListener('registration', async token => {
@@ -103,6 +117,7 @@ export async function unregisterRiderPush() {
   }
   await PushNotifications.unregister().catch(() => {})
   await clearListeners()
+  await NativeNotificationActions.clear().catch(() => {})
   activeUserId = null
   if (serverError) throw serverError
 }

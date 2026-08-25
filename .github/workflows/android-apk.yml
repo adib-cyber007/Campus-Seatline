@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "client/**"
+      - "server/**"
       - ".github/workflows/android-apk.yml"
   pull_request:
     paths:
       - "client/**"
+      - "server/**"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
 
@@ -43,17 +45,20 @@ jobs:
       - name: Install client dependencies
         run: npm ci
 
+      - name: Verify release version parity
+        run: npm run version:check
+
       - name: Build web assets
         run: npm run build
 
       - name: Sync Capacitor Android project
         run: npx cap sync android
 
-      - name: Build installable debug APK
+      - name: Build and test installable debug APK
         run: |
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleDebug
+          ./gradlew testDebugUnitTest assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

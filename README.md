@@ -27,26 +27,30 @@ clear unavailable message and does not fabricate an answer.
 The Android client is a Capacitor shell around the same React application. Build a debug APK
 locally from `client/` with Android SDK 36 and Java 21 installed:
 
-Current Android release: **1.1** (`versionCode 2`).
+Current release: **1.1.0** on root/client/server and Android `versionName` (`versionCode 3`).
 
 ```bash
 npm run android:build
 ```
 
-The APK is written to `client/android/app/build/outputs/apk/debug/app-debug.apk`. Every push that
-changes the client also runs the `Android APK` GitHub Actions workflow and publishes the same file
-as the `campus-seatline-debug-apk` artifact.
+The APK is written to `client/android/app/build/outputs/apk/debug/app-debug.apk`. GitHub Actions
+checks version parity, runs native unit tests, and publishes `campus-seatline-debug-apk`.
+
+Live FCM requires the real Firebase project file at
+`client/android/app/google-services.json` plus Firebase Admin credentials on the server. Keep both
+out of source control; see `docs/android-fcm-manual-test.md` for setup and device verification.
 
 On first launch, open **Server connection** and enter the reachable root URL of the running
 Express/Socket.IO backend (for example `https://seatline.example.edu`, without `/api`). The APK
-permits plain HTTP so it can connect to a campus-LAN development server, but HTTPS should be used
-for any deployment outside a trusted test network. The backend is not embedded in the APK and
-must be hosted separately.
+permits plain HTTP for a trusted campus-LAN development server, but production should use HTTPS.
+The backend is not embedded in the APK and must be hosted separately. Offline riders receive
+data-only FCM; BLE prompts are rendered natively with lock-screen Yes/No actions that reuse the
+same authenticated, duplicate-safe response endpoint as the in-app prompt.
 
 Verify the backend core loop any time with:
 
 ```bash
-npm run smoke     # 105 end-to-end assertions, no server needed (spins its own instance)
+npm run smoke     # 114 end-to-end assertions, no server needed (spins its own instance)
 ```
 
 ### Seeded demo accounts
@@ -99,7 +103,7 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 | Concern          | MVP implementation                                            | Production would need                     |
 | ---------------- | ------------------------------------------------------------- | ----------------------------------------- |
 | BLE proximity    | **Mocked** — manual "Trigger detection" button per rider       | Real beacons on buses + scanner integration (see below) |
-| Notifications    | **In-app** feed + toasts over Socket.IO                        | Firebase Cloud Messaging / push           |
+| Notifications    | Socket.IO in-app + offline Android FCM with native Yes/No actions | Configure Firebase credentials and production monitoring |
 | Real-time sync   | Socket.IO (real)                                               | same, or Firestore streams                |
 | Auth             | JWT with roles (rider/admin; Incharge = granted authority), scrypt hashes | Firebase Auth / hardened JWT rotation |
 | Storage          | **In-memory** (resets on restart)                              | Firestore/Postgres persistence            |
@@ -205,6 +209,6 @@ Key domain rules implemented in `services/occupancy.js`:
 1. Swap the mocked BLE trigger for real hardware scanning (see seam above); deploy beacons per
    bus and define RSSI/proximity thresholds.
 2. Replace in-memory store with Firestore/Postgres; move timers to durable jobs.
-3. Add FCM/web-push so prompts reach locked phones; keep in-app as fallback.
+3. Complete Firebase console/signing setup and validate killed-app actions across supported Android devices.
 4. Harden auth (secret rotation, refresh tokens), add rate limiting and input validation layers.
 5. Model multiple trips/day and service disruptions; add admin tooling for day resets.
