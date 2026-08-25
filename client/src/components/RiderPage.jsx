@@ -46,8 +46,9 @@ function availabilityState(available, capacity) {
   return { key: 'open', label: 'Seats open', symbol: '✓', note: 'Space available' }
 }
 
-function BusCard({ bus, occupancy, activeBusId, drafts, setDrafts, busyKey, onSoft, onAvailable }) {
-  const lockedByOther = Boolean(activeBusId && activeBusId !== bus.busId)
+function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDrafts, busyKey, onSoft, onRelease, onAvailable }) {
+  const lockedByOther = Boolean(activeIsBoarded && activeBusId !== bus.busId)
+  const movingHold = Boolean(activeBusId && !activeIsBoarded && activeBusId !== bus.busId)
   const state = availabilityState(occupancy.availableSeats, occupancy.capacity)
   const maxAvailable = Math.max(0, occupancy.capacity - occupancy.softHolds)
   const draftValue = drafts[bus.busId] ?? occupancy.availableSeats
@@ -98,15 +99,20 @@ function BusCard({ bus, occupancy, activeBusId, drafts, setDrafts, busyKey, onSo
         {bus.boarded ? (
           <div className="decision-state success"><span aria-hidden="true">✓</span><span><strong>You’re counted on this bus</strong><small>One confirmed report for this trip</small></span></div>
         ) : bus.holding ? (
-          <div className="decision-state held"><span aria-hidden="true">◷</span><span><strong>Your Soft Hold is active</strong><small>Confirm after the BLE boarding prompt appears</small></span></div>
+          <div className="held-actions">
+            <div className="decision-state held"><span aria-hidden="true">◷</span><span><strong>Your Soft Hold is active</strong><small>Confirm after the BLE boarding prompt appears</small></span></div>
+            <button className="btn secondary" disabled={Boolean(busyKey)} onClick={() => onRelease(bus.busId)}>
+              {busyKey === `release-${bus.busId}` ? <><span className="spinner dark" /> Releasing</> : 'Release Soft Hold'}
+            </button>
+          </div>
         ) : lockedByOther ? (
           <div className="decision-state neutral"><span aria-hidden="true">—</span><span><strong>Another bus is selected</strong><small>Only one active bus report is allowed per trip</small></span></div>
         ) : (
           <>
-            <div className="decision-copy"><strong>Planning to board today?</strong><span>A “Yes” reserves one Soft Hold.</span></div>
+            <div className="decision-copy"><strong>{movingHold ? 'Prefer this bus instead?' : 'Planning to board today?'}</strong><span>{movingHold ? 'Your current Soft Hold will move here atomically.' : 'A “Yes” reserves one Soft Hold.'}</span></div>
             <div className="segmented-actions" aria-label={`Planning to board ${bus.busName}`}>
               <button className="btn primary" disabled={Boolean(busyKey)} onClick={() => onSoft(bus.busId, 'yes')}>
-                {busyKey === `soft-${bus.busId}` ? <><span className="spinner" /> Saving</> : 'Yes, hold a seat'}
+                {busyKey === `soft-${bus.busId}` ? <><span className="spinner" /> Saving</> : movingHold ? 'Move hold here' : 'Yes, hold a seat'}
               </button>
               <button className="btn secondary" disabled={Boolean(busyKey)} onClick={() => onSoft(bus.busId, 'no')}>No</button>
             </div>
@@ -157,6 +163,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   const [overview, setOverview] = useState(null)
   const [bleBus, setBleBus] = useState('')
   const [availableDrafts, setAvailableDrafts] = useState({})
+  const [stopDraft, setStopDraft] = useState('')
   const [busyKey, setBusyKey] = useState('')
 
   const load = () => api('/rider/overview').then(setOverview).catch(error => toast(error.message, 'error'))
@@ -178,6 +185,23 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
 
   const answerSoft = (busId, response) => run(`soft-${busId}`, () =>
     api('/rider/soft-hold', { method: 'POST', body: { busId, response } }))
+
+  const releaseHold = busId => run(`release-${busId}`, async () => {
+    await api('/rider/soft-hold/release', { method: 'POST', body: { busId } })
+    toast('Soft Hold released', 'feedback')
+  })
+
+  const setDailyStop = () => run('daily-stop', async () => {
+    await api('/rider/daily-stop', { method: 'POST', body: { stopId: stopDraft } })
+    setStopDraft('')
+    toast('Today’s boarding stop updated; your registered stop is unchanged', 'feedback')
+  })
+
+  const resetDailyStop = () => run('daily-stop-reset', async () => {
+    await api('/rider/daily-stop', { method: 'DELETE' })
+    setStopDraft('')
+    toast('Boarding stop reset to your registered stop', 'feedback')
+  })
 
   const triggerBle = () => run('ble', async () => {
     await api('/rider/ble/simulate', { method: 'POST', body: { busId: bleBus } })
@@ -213,7 +237,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   const activeIsBoarded = activeBusId && overview.boardedBusIds?.includes(activeBusId)
   const eligibleBleBuses = activeIsBoarded
     ? []
-    : overview.buses.filter(bus => !activeBusId || bus.busId === activeBusId)
+    : overview.buses
   const timeline = overview.stops.flatMap(stop => stop.timeline.map(row => ({ ...row, stopName: stop.name })))
 
   return (
@@ -246,10 +270,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
             bus={{ ...bus, boarded: overview.boardedBusIds?.includes(bus.busId), holding: overview.softHoldBusIds?.includes(bus.busId) }}
             occupancy={occupancy[bus.busId] || bus}
             activeBusId={activeBusId}
+            activeIsBoarded={activeIsBoarded}
             drafts={availableDrafts}
             setDrafts={setAvailableDrafts}
             busyKey={busyKey}
             onSoft={answerSoft}
+            onRelease={releaseHold}
             onAvailable={setAvailable}
           />
         ))}
@@ -297,6 +323,33 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
               ))}
             </ul>
           )}
+        </details>
+
+        <details className="card stop-override-card">
+          <summary>
+            <span><span className="eyebrow">Optional for today</span><strong>Boarding from a different stop today?</strong></span>
+            <span className="disclosure-plus" aria-hidden="true">+</span>
+          </summary>
+          <p>Your registered stop stays unchanged. This selection automatically expires when today’s trip day ends.</p>
+          <p className="current-stop-context"><strong>Using today:</strong> {overview.stops.map(stop => stop.name).join(' · ')}</p>
+          <label className="field-label">Different stop
+            <select value={stopDraft} onChange={event => setStopDraft(event.target.value)}>
+              <option value="">Choose a stop…</option>
+              {overview.availableStops
+                .filter(stop => !overview.stops.some(current => current.id === stop.id))
+                .map(stop => <option key={stop.id} value={stop.id}>{stop.name}</option>)}
+            </select>
+          </label>
+          <div className="row">
+            <button className="btn primary" disabled={!stopDraft || Boolean(busyKey)} onClick={setDailyStop}>
+              {busyKey === 'daily-stop' ? <><span className="spinner" /> Saving</> : 'Use this stop today'}
+            </button>
+            {overview.dailyStopOverride && (
+              <button className="btn secondary" disabled={Boolean(busyKey)} onClick={resetDailyStop}>
+                {busyKey === 'daily-stop-reset' ? <><span className="spinner dark" /> Resetting</> : 'Use my registered stop'}
+              </button>
+            )}
+          </div>
         </details>
       </section>
 

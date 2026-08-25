@@ -1,6 +1,7 @@
 import { app } from './src/app.js'
-import { getDb, occupancyOf } from './src/db.js'
+import { getDb, occupancyOf, effectiveStopIdsForUser } from './src/db.js'
 import { handleDetection, snapshot } from './src/services/occupancy.js'
+import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
 import { setIo } from './src/realtime.js'
 
 const server = app.listen(0)
@@ -347,6 +348,231 @@ async function main() {
   })
   check('registration normalizes rider name and email',
     normalized.status === 201 && normalized.data.user.name === 'Trimmed Rider' && normalized.data.user.email === 'trimmed@campus.edu')
+
+  console.log('CHANGE 1: global Soft Hold transfer and atomic BLE bus switch')
+
+  const transferStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Transfer Test Gate', timeline: [{ time: '10:00', label: 'Test trip' }], busIds: [] }
+  })
+  const transferBusA = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Transfer-A', capacity: 12, stopIds: [transferStop.data.stop.id] }
+  })
+  const transferBusB = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Transfer-B', capacity: 12, stopIds: [transferStop.data.stop.id] }
+  })
+  const transferRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Transfer Rider', email: 'transfer@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] }
+  })
+  let transferOverview = (await call('/rider/overview', { token: transferRider.data.token })).data
+  check('multi-option rider is not auto-held', transferOverview.softHoldBusIds.length === 0)
+
+  const holdA = await call('/rider/soft-hold', {
+    method: 'POST', token: transferRider.data.token,
+    body: { busId: transferBusA.data.bus.id, response: 'yes' }
+  })
+  check('rider creates Soft Hold on Bus A', holdA.status === 200)
+  const beforeSwitch = snapshot()
+  const beforeA = beforeSwitch.find(item => item.busId === transferBusA.data.bus.id)
+  const beforeB = beforeSwitch.find(item => item.busId === transferBusB.data.bus.id)
+  const eventStart = realtimeEvents.length
+
+  const detectB = await call('/rider/ble/simulate', {
+    method: 'POST', token: transferRider.data.token,
+    body: { busId: transferBusB.data.bus.id }
+  })
+  const switchResponse = await call(`/rider/prompts/${detectB.data.prompts[0].id}/respond`, {
+    method: 'POST', token: transferRider.data.token, body: { response: 'yes' }
+  })
+  const afterSwitch = snapshot()
+  const afterA = afterSwitch.find(item => item.busId === transferBusA.data.bus.id)
+  const afterB = afterSwitch.find(item => item.busId === transferBusB.data.bus.id)
+  check('BLE switch is direct occupy on Bus B, not a promotion there',
+    switchResponse.status === 200 && switchResponse.data.promoted === false &&
+    switchResponse.data.transferredFromBusId === transferBusA.data.bus.id)
+  check('BLE switch releases A hold and occupies B exactly once',
+    afterA.softHolds === beforeA.softHolds - 1 &&
+    afterB.seatsOccupied === beforeB.seatsOccupied + 1 && afterB.softHolds === beforeB.softHolds)
+
+  const switchOccupancyEvents = realtimeEvents.slice(eventStart)
+    .filter(event => event.event === 'occupancy')
+  check('no realtime observer sees a half-completed transfer',
+    switchOccupancyEvents.length > 0 && switchOccupancyEvents.every(event => {
+      const a = event.payload.find(item => item.busId === transferBusA.data.bus.id)
+      const b = event.payload.find(item => item.busId === transferBusB.data.bus.id)
+      return a.softHolds === afterA.softHolds && b.seatsOccupied === afterB.seatsOccupied
+    }))
+  const activeTransferStates = getDb().boardingReports.filter(report =>
+    report.userId === transferRider.data.user.id &&
+    (report.state === 'soft_hold' || report.state === 'seats_occupied'))
+  check('data layer exposes exactly one active global report state',
+    activeTransferStates.length === 1 && activeTransferStates[0].busId === transferBusB.data.bus.id &&
+    activeTransferStates[0].state === 'seats_occupied')
+  check('old Bus A report is retained only as released history',
+    getDb().boardingReports.some(report => report.userId === transferRider.data.user.id &&
+      report.busId === transferBusA.data.bus.id && report.state === 'released'))
+
+  const duplicateSwitchReports = await Promise.all([
+    ...Array.from({ length: 5 }, () => call('/rider/ble/simulate', {
+      method: 'POST', token: transferRider.data.token, body: { busId: transferBusB.data.bus.id }
+    })),
+    ...Array.from({ length: 5 }, () => call('/rider/soft-hold', {
+      method: 'POST', token: transferRider.data.token,
+      body: { busId: transferBusB.data.bus.id, response: 'yes' }
+    }))
+  ])
+  const holdAfterOccupiedOnOther = await call('/rider/soft-hold', {
+    method: 'POST', token: transferRider.data.token,
+    body: { busId: transferBusA.data.bus.id, response: 'yes' }
+  })
+  const afterDuplicateSwitch = snapshot()
+  check('rapid same-bus reports after occupation are all rejected',
+    duplicateSwitchReports.every(result => result.status === 409))
+  check('occupied rider cannot create a second active state on another bus', holdAfterOccupiedOnOther.status === 409)
+  check('duplicate attempts do not inflate either switched bus',
+    afterDuplicateSwitch.find(item => item.busId === transferBusA.data.bus.id).softHolds === afterA.softHolds &&
+    afterDuplicateSwitch.find(item => item.busId === transferBusB.data.bus.id).seatsOccupied === afterB.seatsOccupied)
+
+  console.log('CHANGE 2: single-option automatic Soft Hold with reusable release')
+
+  const singleStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Single Option Gate', timeline: [{ time: '11:00', label: 'Confirmed trip' }], busIds: [] }
+  })
+  const singleBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Only-Option', capacity: 9, stopIds: [singleStop.data.stop.id] }
+  })
+  const autoRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Automatic Hold Rider', email: 'auto-hold@campus.edu', password: 'pass1234', role: 'rider', stopIds: [singleStop.data.stop.id] }
+  })
+  let autoOverview = (await call('/rider/overview', { token: autoRider.data.token })).data
+  check('single-option rider is automatically soft-held once',
+    autoOverview.softHoldBusIds.length === 1 && autoOverview.softHoldBusIds[0] === singleBus.data.bus.id &&
+    autoOverview.buses.find(item => item.busId === singleBus.data.bus.id).softHolds === 1)
+  check('auto-hold notification explains one-tap release',
+    autoOverview.notifications.some(item => item.type === 'auto_hold' &&
+      item.message.includes('automatically soft-held') && item.message.includes('tap Release')))
+
+  const autoRelease = await call('/rider/soft-hold/release', {
+    method: 'POST', token: autoRider.data.token, body: { busId: singleBus.data.bus.id }
+  })
+  autoOverview = (await call('/rider/overview', { token: autoRider.data.token })).data
+  check('auto Soft Hold uses the same one-tap release endpoint',
+    autoRelease.status === 200 && autoOverview.softHoldBusIds.length === 0 &&
+    autoOverview.buses.find(item => item.busId === singleBus.data.bus.id).softHolds === 0)
+  const autoOverviewAgain = (await call('/rider/overview', { token: autoRider.data.token })).data
+  check('released auto-hold is not recreated on a later overview that day', autoOverviewAgain.softHoldBusIds.length === 0)
+  check('auto-hold data contains no rider ranking fields',
+    getDb().autoHoldEvaluations.every(item =>
+      !Object.keys(item).some(key => /priority|rank|queue|order/i.test(key))))
+
+  console.log('CHANGE 3: optional daily stop override and automatic default reversion')
+
+  const overrideRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Stop Override Rider', email: 'stop-override@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] }
+  })
+  const overrideDefault = (await call('/rider/overview', { token: overrideRider.data.token })).data
+  check('unused override preserves zero-action default stop context',
+    !overrideDefault.dailyStopOverride && overrideDefault.stops[0].id === transferStop.data.stop.id)
+  const setOverride = await call('/rider/daily-stop', {
+    method: 'POST', token: overrideRider.data.token, body: { stopId: singleStop.data.stop.id }
+  })
+  let overriddenOverview = (await call('/rider/overview', { token: overrideRider.data.token })).data
+  check('daily override changes only today effective stop, not registration',
+    setOverride.status === 200 && overriddenOverview.stops[0].id === singleStop.data.stop.id &&
+    overriddenOverview.defaultStops[0].id === transferStop.data.stop.id &&
+    overriddenOverview.user.stopIds[0] === transferStop.data.stop.id)
+  check('override routes bus options and auto-hold through overridden stop',
+    overriddenOverview.buses.some(item => item.busId === singleBus.data.bus.id) &&
+    !overriddenOverview.buses.some(item => item.busId === transferBusA.data.bus.id) &&
+    overriddenOverview.softHoldBusIds.includes(singleBus.data.bus.id))
+  const wrongContextDetection = await call('/rider/ble/simulate', {
+    method: 'POST', token: overrideRider.data.token, body: { busId: transferBusA.data.bus.id }
+  })
+  const overrideDetection = await call('/rider/ble/simulate', {
+    method: 'POST', token: overrideRider.data.token, body: { busId: singleBus.data.bus.id }
+  })
+  check('BLE reporting rejects the default stop while override is active', wrongContextDetection.status === 403)
+  check('BLE prompt is routed to overridden stop',
+    overrideDetection.status === 200 && overrideDetection.data.prompts[0].stopId === singleStop.data.stop.id)
+  check('a different trip-day key automatically resolves back to registered stop',
+    effectiveStopIdsForUser(overrideRider.data.user, '2099-01-01')[0] === transferStop.data.stop.id)
+
+  const resetOverride = await call('/rider/daily-stop', { method: 'DELETE', token: overrideRider.data.token })
+  overriddenOverview = (await call('/rider/overview', { token: overrideRider.data.token })).data
+  check('reset returns routing to default without changing registration',
+    resetOverride.status === 200 && !overriddenOverview.dailyStopOverride &&
+    overriddenOverview.stops[0].id === transferStop.data.stop.id &&
+    overriddenOverview.user.stopIds[0] === transferStop.data.stop.id)
+  check('prompts from the former overridden stop are removed from active view',
+    !overriddenOverview.prompts.some(promptItem => promptItem.stopId === singleStop.data.stop.id))
+
+  console.log('CHANGE 4: admin-only read-only AI query assistant')
+
+  const assistantSnapshot = adminReadSnapshot()
+  check('assistant snapshot contains admin data but no credentials',
+    assistantSnapshot.stops.length === getDb().stops.length &&
+    !JSON.stringify(assistantSnapshot).includes('passwordHash'))
+  let generatorInput = null
+  const beforeReadQuestion = JSON.stringify(getDb())
+  const assistantAnswer = await answerAdminQuestion('Which stops have no Incharge assigned?', {
+    model: 'test/read-only-model',
+    generator: async input => {
+      generatorInput = input
+      const json = input.prompt.split('Read-only data snapshot:\n')[1]
+      const supplied = JSON.parse(json)
+      const names = supplied.stops.filter(stop => stop.inchargeAssignments.length === 0).map(stop => stop.name)
+      return { output: { resolved: true, answer: names.join(', ') } }
+    }
+  })
+  check('assistant answers from the supplied read-only snapshot',
+    assistantAnswer.answer.includes('Single Option Gate') && generatorInput && !('tools' in generatorInput))
+  check('ordinary assistant questions cannot modify application data',
+    JSON.stringify(getDb()) === beforeReadQuestion)
+  const unresolvedAnswer = await answerAdminQuestion('What was the weather at each stop?', {
+    model: 'test/read-only-model',
+    generator: async () => ({ output: { resolved: false, answer: 'Weather data is not present in the Seatline snapshot.' } })
+  })
+  check('unresolvable questions return a clear non-fabricated fallback',
+    unresolvedAnswer.unresolved === true && unresolvedAnswer.answer.includes('not present'))
+
+  const riderAssistant = await call('/admin/assistant/query', {
+    method: 'POST', token: rider, body: { question: 'Which buses are full?' }
+  })
+  const inchargeAssistant = await call('/admin/assistant/query', {
+    method: 'POST', token: incharge, body: { question: 'Which buses are full?' }
+  })
+  check('assistant endpoint is unavailable to riders and Incharge-authority users',
+    riderAssistant.status === 403 && inchargeAssistant.status === 403)
+
+  const beforeWriteRequests = JSON.stringify(getDb())
+  const writeRequests = await Promise.all([
+    'Delete every stop',
+    'Can you change Transfer-A capacity to 1?',
+    'Please revoke all Incharge assignments',
+    'I want you to adjust seats available to zero'
+  ].map(question => call('/admin/assistant/query', {
+    method: 'POST', token: adminTok, body: { question }
+  })))
+  check('write phrasing is refused before any provider call',
+    writeRequests.every(result => result.status === 200 && result.data.refused === true))
+  check('assistant write attempts leave all application data byte-for-byte unchanged',
+    JSON.stringify(getDb()) === beforeWriteRequests)
+
+  const priorGatewayKey = process.env.AI_GATEWAY_API_KEY
+  delete process.env.AI_GATEWAY_API_KEY
+  const unavailableAssistant = await call('/admin/assistant/query', {
+    method: 'POST', token: adminTok, body: { question: 'How many buses are active?' }
+  })
+  if (priorGatewayKey) process.env.AI_GATEWAY_API_KEY = priorGatewayKey
+  check('missing provider configuration produces a clear fallback, not fabrication',
+    unavailableAssistant.status === 503 && unavailableAssistant.data.error.includes('not configured'))
 
   const forbidden = await call('/admin/stops', { method: 'POST', token: rider, body: { name: 'Hack' } })
   check('rider blocked from admin endpoints', forbidden.status === 403)

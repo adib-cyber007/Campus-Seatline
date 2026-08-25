@@ -1,4 +1,8 @@
-import { getDb, nextId, todayKey, occupancyOf, pushNotification, busById, stopById, userById } from '../db.js'
+import {
+  getDb, nextId, todayKey, occupancyOf, pushNotification, busById, stopById, userById,
+  busesForStops, activeReportForUser, transitionRiderReport, releaseRiderSoftHold,
+  effectiveStopIdsForUser
+} from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
 
@@ -28,22 +32,6 @@ export function riderTripState(userId, busId) {
   return getDb().boardingReports.find(
     r => r.userId === userId && r.busId === busId && r.tripDate === trip
   )
-}
-
-function ensureState(userId, busId, stopId) {
-  const db = getDb()
-  const trip = todayKey()
-  let rec = db.boardingReports.find(
-    r => r.userId === userId && r.busId === busId && r.tripDate === trip
-  )
-  if (!rec) {
-    rec = {
-      id: nextId(), userId, busId, stopId: stopId || null,
-      tripDate: trip, state: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString()
-    }
-    db.boardingReports.push(rec)
-  }
-  return rec
 }
 
 function logAttempt({ userId, busId, stopId, channel, requested, outcome, message }) {
@@ -85,11 +73,7 @@ export function hasBoardedToday(userId, busId) {
 }
 
 export function activeTripStateForUser(userId) {
-  const trip = todayKey()
-  return getDb().boardingReports.find(
-    r => r.userId === userId && r.tripDate === trip &&
-      (r.state === 'soft_hold' || r.state === 'seats_occupied')
-  )
+  return activeReportForUser(userId)
 }
 
 export function tripStatesForUser(userId) {
@@ -125,40 +109,39 @@ export function passedStopIdsFor(busId) {
   return getDb().arrivalEvents.filter(e => e.busId === busId && e.tripDate === trip).map(e => e.stopId)
 }
 
-export function applySoftHold(user, bus, response) {
+function logHoldRelease(userId, released, channel, outcome, message = null) {
+  if (!released) return
+  logAttempt({
+    userId,
+    busId: released.busId,
+    stopId: released.stopId,
+    channel,
+    requested: 'release',
+    outcome,
+    message
+  })
+  occupancyOf(released.busId).lastUpdated = new Date().toISOString()
+}
+
+export function applySoftHold(user, bus, response, { source = 'manual', stopId: requestedStopId } = {}) {
   const now = new Date().toISOString()
-  const stopId = user.stopIds[0] || null
+  const stopId = requestedStopId || effectiveStopIdsForUser(user)[0] || null
 
   if (response === 'yes') {
-    if (hasBoardedToday(user.id, bus.id)) {
+    const active = activeTripStateForUser(user.id)
+    if (active?.state === 'seats_occupied') {
+      const activeBus = busById(active.busId)
       logAttempt({
         userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'yes',
         outcome: 'rejected_already_boarded',
-        message: "You've already been counted as boarded for this trip."
+        message: `Already occupied on ${activeBus?.name || active.busId}`
       })
-      feedback(user.id, `You've already been counted as boarded on ${bus.name} for this trip — one report per rider per trip.`)
+      feedback(user.id, `You've already been counted as boarded on ${activeBus?.name || 'a bus'} for this trip — no additional report was added.`)
       broadcastAll()
       syncRiderState(user.id)
-      return { ok: false, status: 409, error: `You've already been counted as boarded on ${bus.name} for this trip` }
+      return { ok: false, status: 409, error: `You've already been counted as boarded on ${activeBus?.name || 'a bus'} for this trip` }
     }
-    const otherActive = activeTripStateForUser(user.id)
-    if (otherActive && otherActive.busId !== bus.id) {
-      const otherBus = busById(otherActive.busId)
-      logAttempt({
-        userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'yes',
-        outcome: 'rejected_other_bus_active',
-        message: `Active report exists on ${otherBus?.name || otherActive.busId}`
-      })
-      feedback(
-        user.id,
-        `You already have an active report on ${otherBus?.name || 'another bus'} for this trip — one bus per rider per day.`
-      )
-      broadcastAll()
-      syncRiderState(user.id)
-      return { ok: false, status: 409, error: `You already have an active report on ${otherBus?.name || 'another bus'} for this trip` }
-    }
-    const state = ensureState(user.id, bus.id, stopId)
-    if (state.state === 'soft_hold') {
+    if (active?.state === 'soft_hold' && active.busId === bus.id) {
       logAttempt({
         userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'yes',
         outcome: 'no_change', message: 'Soft hold already active'
@@ -168,6 +151,7 @@ export function applySoftHold(user, bus, response) {
       syncRiderState(user.id)
       return { ok: true, changed: false }
     }
+
     const current = snapshot().find(item => item.busId === bus.id)
     if (!current || current.availableSeats <= 0) {
       logAttempt({
@@ -179,15 +163,36 @@ export function applySoftHold(user, bus, response) {
       syncRiderState(user.id)
       return { ok: false, status: 409, error: `${bus.name} currently has no seats available` }
     }
-    state.state = 'soft_hold'
-    state.updatedAt = now
+
+    const transition = transitionRiderReport({
+      userId: user.id, busId: bus.id, stopId, toState: 'soft_hold', source
+    })
+    if (!transition.ok) {
+      return { ok: false, status: 409, error: 'Your trip report state changed. Refresh and try again.' }
+    }
+
+    logHoldRelease(
+      user.id,
+      transition.released,
+      'soft_hold_release',
+      'accepted_transfer_release',
+      `Transferred Soft Hold to ${bus.name}`
+    )
     occupancyOf(bus.id).lastUpdated = now
     logAttempt({
-      userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'yes',
-      outcome: 'accepted_new_soft_hold'
+      userId: user.id, busId: bus.id, stopId,
+      channel: source === 'auto' ? 'auto_soft_hold' : 'soft_intent', requested: 'yes',
+      outcome: transition.released ? 'accepted_soft_hold_transfer' :
+        source === 'auto' ? 'accepted_auto_soft_hold' : 'accepted_new_soft_hold'
     })
     const snap = snapshot().find(s => s.busId === bus.id)
-    feedback(user.id, `Soft hold placed for ${bus.name} — ${snap.availableSeats} seats effectively remaining.`)
+    if (source === 'auto') {
+      feedback(user.id, `You've been automatically soft-held on ${bus.name} (your only bus option today) — tap Release if you're not traveling.`, 'auto_hold')
+    } else if (transition.released) {
+      feedback(user.id, `Your Soft Hold moved to ${bus.name} — ${snap.availableSeats} seats effectively remaining.`)
+    } else {
+      feedback(user.id, `Soft hold placed for ${bus.name} — ${snap.availableSeats} seats effectively remaining.`)
+    }
   } else {
     logAttempt({
       userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'no',
@@ -201,13 +206,54 @@ export function applySoftHold(user, bus, response) {
   return { ok: true, changed: response === 'yes' }
 }
 
+export function releaseSoftHold(user, bus, reason = 'rider_release') {
+  const released = releaseRiderSoftHold({ userId: user.id, busId: bus.id, reason })
+  if (!released.ok) {
+    return { ok: false, status: 409, error: `You do not have an active Soft Hold on ${bus.name}` }
+  }
+  logHoldRelease(user.id, { ...released.record }, 'soft_hold_release', 'accepted_release')
+  feedback(user.id, `Your Soft Hold on ${bus.name} was released. Counts are updated.`, 'feedback')
+  broadcastAll()
+  syncRiderState(user.id)
+  return { ok: true, changed: true }
+}
+
+export function ensureSingleOptionAutoHold(user) {
+  const db = getDb()
+  const tripDate = todayKey()
+  const effectiveStopIds = effectiveStopIdsForUser(user)
+  const contextKey = [...effectiveStopIds].sort().join(':')
+  const existing = db.autoHoldEvaluations.find(
+    item => item.userId === user.id && item.tripDate === tripDate && item.contextKey === contextKey
+  )
+  if (existing) return existing
+
+  const viableBuses = busesForStops(effectiveStopIds)
+  const evaluation = {
+    id: nextId(), userId: user.id, tripDate,
+    contextKey,
+    stopIds: [...effectiveStopIds], viableBusIds: viableBuses.map(bus => bus.id),
+    outcome: viableBuses.length === 1 ? 'eligible' : 'not_single_option',
+    createdAt: new Date().toISOString()
+  }
+  db.autoHoldEvaluations.push(evaluation)
+
+  if (viableBuses.length !== 1 || activeTripStateForUser(user.id)) return evaluation
+  const result = applySoftHold(user, viableBuses[0], 'yes', {
+    source: 'auto', stopId: effectiveStopIds[0] || null
+  })
+  evaluation.outcome = result.ok && result.changed ? 'created' : 'not_created'
+  evaluation.error = result.ok ? null : result.error
+  return evaluation
+}
+
 function downstreamRecipients(bus, stopId) {
   const db = getDb()
   const idx = bus.stopIds.indexOf(stopId)
   if (idx === -1) return []
   const downstream = bus.stopIds.slice(idx + 1)
   return db.users
-    .filter(u => u.stopIds.some(s => downstream.includes(s)))
+    .filter(u => effectiveStopIdsForUser(u).some(s => downstream.includes(s)))
     .map(u => u.id)
 }
 
@@ -231,7 +277,7 @@ export function applyBleResponse(user, prompt, response) {
     return result
   }
 
-  if (!bus || !stop || user.role !== 'rider' || !user.stopIds.includes(stop.id) || !bus.stopIds.includes(stop.id)) {
+  if (!bus || !stop || user.role !== 'rider' || !effectiveStopIdsForUser(user).includes(stop.id) || !bus.stopIds.includes(stop.id)) {
     prompt.status = 'cancelled'
     logAttempt({
       userId: user.id, busId: prompt.busId, stopId: prompt.stopId,
@@ -264,20 +310,20 @@ export function applyBleResponse(user, prompt, response) {
   }
 
   const otherActive = response === 'yes' ? activeTripStateForUser(user.id) : null
-  if (otherActive && otherActive.busId !== bus.id) {
+  if (otherActive?.state === 'seats_occupied' && otherActive.busId !== bus.id) {
     const otherBus = busById(otherActive.busId)
     logAttempt({
       userId: user.id, busId: bus.id, stopId: stop.id, channel: 'ble_confirmed', requested: 'yes',
-      outcome: 'rejected_other_bus_active',
-      message: `Active report exists on ${otherBus?.name || otherActive.busId}`
+      outcome: 'rejected_already_boarded',
+      message: `Already occupied on ${otherBus?.name || otherActive.busId}`
     })
     feedback(
       user.id,
-      `You already have an active report on ${otherBus?.name || 'another bus'} for this trip — one bus per rider per day.`
+      `You've already been counted as boarded on ${otherBus?.name || 'another bus'} for this trip — no double count.`
     )
     return finish({
       ok: false, status: 409,
-      error: `You already have an active report on ${otherBus?.name || 'another bus'} for this trip`,
+      error: `You've already been counted as boarded on ${otherBus?.name || 'another bus'} for this trip`,
       promoted: false, arrivalCreated: false, duplicate: true
     })
   }
@@ -291,8 +337,8 @@ export function applyBleResponse(user, prompt, response) {
     return finish({ ok: true, promoted: false, arrivalCreated: false })
   }
 
-  const state = ensureState(user.id, bus.id, stop.id)
-  if (state.state !== 'soft_hold') {
+  const sameBusHold = otherActive?.state === 'soft_hold' && otherActive.busId === bus.id
+  if (!sameBusHold) {
     const current = snapshot().find(item => item.busId === bus.id)
     if (!current || current.availableSeats <= 0) {
       logAttempt({
@@ -307,20 +353,36 @@ export function applyBleResponse(user, prompt, response) {
       })
     }
   }
-  let promoted = false
-  if (state.state === 'soft_hold') {
-    state.state = 'seats_occupied'
-    promoted = true
-  } else {
-    state.state = 'seats_occupied'
+  const transition = transitionRiderReport({
+    userId: user.id,
+    busId: bus.id,
+    stopId: stop.id,
+    toState: 'seats_occupied',
+    source: 'ble_confirmed'
+  })
+  if (!transition.ok) {
+    feedback(user.id, 'Your trip report state changed before this response completed. Counts were not changed.', 'error')
+    return finish({
+      ok: false, status: 409, error: 'Your trip report state changed. Refresh and try again.',
+      promoted: false, arrivalCreated: false, duplicate: true
+    })
   }
-  state.stopId = stop.id
-  state.updatedAt = now
+  const promoted = Boolean(transition.promoted)
+  if (transition.released) {
+    logHoldRelease(
+      user.id,
+      transition.released,
+      'soft_hold_release',
+      'accepted_transfer_release',
+      `Released during BLE boarding on ${bus.name}`
+    )
+  }
   occupancyOf(bus.id).lastUpdated = now
 
   logAttempt({
     userId: user.id, busId: bus.id, stopId: stop.id, channel: 'ble_confirmed', requested: 'yes',
-    outcome: promoted ? 'accepted_promotion' : 'accepted_direct_boarding'
+    outcome: promoted ? 'accepted_promotion' :
+      transition.released ? 'accepted_transfer_direct_boarding' : 'accepted_direct_boarding'
   })
 
   let event = db.arrivalEvents.find(e =>
@@ -351,14 +413,22 @@ export function applyBleResponse(user, prompt, response) {
     })
   }
 
-  return finish({ ok: true, promoted, arrivalCreated })
+  return finish({
+    ok: true,
+    promoted,
+    arrivalCreated,
+    transferredFromBusId: transition.released?.busId || null
+  })
 }
 
 export function promptsForUser(userId) {
   const db = getDb()
   const now = Date.now()
+  const user = userById(userId)
+  const effectiveStopIds = user ? effectiveStopIdsForUser(user) : []
   return db.prompts
-    .filter(p => p.userId === userId && p.status === 'pending' && new Date(p.expiresAt).getTime() > now)
+    .filter(p => p.userId === userId && p.tripDate === todayKey() &&
+      effectiveStopIds.includes(p.stopId) && p.status === 'pending' && new Date(p.expiresAt).getTime() > now)
     .map(p => ({
       ...p,
       busName: busById(p.busId)?.name || p.busId,
@@ -382,8 +452,8 @@ export function handleDetection({ userId, busId, stopId }) {
   const bus = busById(busId)
   const stop = stopById(stopId)
   if (!user || !bus || !stop || user.role !== 'rider' ||
-    !user.stopIds.includes(stop.id) || !bus.stopIds.includes(stop.id)) {
-    throw new Error('Invalid detection payload: rider, bus and registered stop must match')
+    !effectiveStopIdsForUser(user).includes(stop.id) || !bus.stopIds.includes(stop.id)) {
+    throw new Error('Invalid detection payload: rider, bus and effective stop must match')
   }
 
   if (hasBoardedToday(userId, busId)) {
@@ -392,11 +462,11 @@ export function handleDetection({ userId, busId, stopId }) {
   }
 
   const otherActive = activeTripStateForUser(userId)
-  if (otherActive && otherActive.busId !== busId) {
+  if (otherActive?.state === 'seats_occupied' && otherActive.busId !== busId) {
     const otherBus = busById(otherActive.busId)
     feedback(
       userId,
-      `You already have an active report on ${otherBus?.name || 'another bus'} for this trip — one bus per rider per day.`
+      `You've already been counted as boarded on ${otherBus?.name || 'another bus'} for this trip.`
     )
     return null
   }

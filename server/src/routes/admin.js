@@ -3,6 +3,7 @@ import { getDb, nextId, busById, stopById, sanitizeUser } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import { snapshot } from '../services/occupancy.js'
 import { auditSnapshot } from '../services/audit.js'
+import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
 
 const router = Router()
@@ -73,6 +74,19 @@ router.get('/overview', (req, res) => {
     occupancy: snapshot(),
     audit: auditSnapshot()
   })
+})
+
+router.post('/assistant/query', async (req, res) => {
+  try {
+    const result = await answerAdminQuestion(req.body?.question)
+    res.json(result)
+  } catch (error) {
+    res.status(error.status || 502).json({
+      error: error.status
+        ? error.message
+        : 'The Admin AI assistant is temporarily unavailable. No data was changed; please try again later.'
+    })
+  }
 })
 
 router.post('/incharge-assignments', (req, res) => {

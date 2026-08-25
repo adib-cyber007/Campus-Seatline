@@ -604,9 +604,81 @@ function AuditTab({ data, auditFeed }) {
   )
 }
 
+const assistantExamples = [
+  'Which stops have no Incharge assigned?',
+  'Show buses currently above 90% occupancy',
+  'How many Soft Hold releases happened today?',
+  'List Incharge assignments changed this week.'
+]
+
+function AssistantTab() {
+  const [question, setQuestion] = useState('')
+  const [answer, setAnswer] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const ask = async event => {
+    event?.preventDefault()
+    if (!question.trim() || busy) return
+    setBusy(true)
+    setError('')
+    setAnswer('')
+    try {
+      const result = await api('/admin/assistant/query', {
+        method: 'POST', body: { question: question.trim() }
+      })
+      setAnswer(result.answer)
+    } catch (requestError) {
+      setError(requestError.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card wide admin-section assistant-panel" aria-labelledby="assistant-title">
+      <SectionHeading
+        eyebrow="Read-only insight"
+        title="Ask Campus Seatline"
+        description="Ask about current stops, buses, seat counts, Incharge assignments, or audit activity. This assistant has no write tools and cannot change transport data."
+        action={<span className="status-label info"><span aria-hidden="true">◇</span> Admin only</span>}
+      />
+      <form className="assistant-form" onSubmit={ask}>
+        <label htmlFor="admin-assistant-question">Question</label>
+        <div className="assistant-query-row">
+          <input
+            id="admin-assistant-question"
+            value={question}
+            maxLength="500"
+            onChange={event => setQuestion(event.target.value)}
+            placeholder="e.g. Which stops have no Incharge assigned?"
+          />
+          <button className="btn primary" disabled={!question.trim() || busy} type="submit">
+            {busy ? <><span className="spinner" /> Checking</> : 'Ask assistant'}
+          </button>
+        </div>
+        <div className="assistant-examples" aria-label="Example questions">
+          {assistantExamples.map(example => (
+            <button key={example} type="button" onClick={() => setQuestion(example)}>{example}</button>
+          ))}
+        </div>
+      </form>
+      <div className={`assistant-response ${error ? 'error' : answer ? 'ready' : ''}`} role="status" aria-live="polite">
+        {error ? (
+          <><strong>Assistant unavailable</strong><p>{error}</p></>
+        ) : answer ? (
+          <><strong>Answer</strong><pre>{answer}</pre></>
+        ) : (
+          <><strong>Waiting for a question</strong><p>Answers are generated only from the current read-only admin snapshot.</p></>
+        )}
+      </div>
+    </section>
+  )
+}
+
 const adminTabs = [
   ['overview', 'Overview'], ['stops', 'Stops'], ['buses', 'Buses'],
-  ['incharge', 'Incharge'], ['users', 'Users'], ['audit', 'Audit log']
+  ['incharge', 'Incharge'], ['users', 'Users'], ['audit', 'Audit log'], ['assistant', 'AI assistant']
 ]
 
 export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, connectionStatus }) {
@@ -660,6 +732,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         {tab === 'incharge' && <AssignmentsTab data={data} reload={load} toast={toast} />}
         {tab === 'users' && <UsersTab data={data} />}
         {tab === 'audit' && <AuditTab data={data} auditFeed={auditFeed} />}
+        {tab === 'assistant' && <AssistantTab />}
       </div>
     </div>
   )

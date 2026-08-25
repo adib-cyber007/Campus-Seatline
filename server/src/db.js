@@ -26,7 +26,9 @@ const db = {
   arrivalEvents: [],
   prompts: [],
   notifications: [],
-  overrides: []
+  overrides: [],
+  dailyStopOverrides: [],
+  autoHoldEvaluations: []
 }
 
 export const nextId = uid
@@ -69,6 +71,123 @@ export const busById = id => db.buses.find(b => b.id === id)
 export const stopById = id => db.stops.find(s => s.id === id)
 export const busesForStops = stopIds =>
   db.buses.filter(b => b.stopIds.some(s => stopIds.includes(s)))
+
+const ACTIVE_REPORT_STATES = new Set(['soft_hold', 'seats_occupied'])
+
+export function activeReportForUser(userId, tripDate = todayKey()) {
+  const active = db.boardingReports.filter(
+    report => report.userId === userId && report.tripDate === tripDate && ACTIVE_REPORT_STATES.has(report.state)
+  )
+  if (active.length > 1) {
+    throw new Error(`Rider report invariant violated for ${userId} on ${tripDate}`)
+  }
+  return active[0] || null
+}
+
+function reportFor(userId, busId, tripDate) {
+  return db.boardingReports.find(
+    report => report.userId === userId && report.busId === busId && report.tripDate === tripDate
+  )
+}
+
+/**
+ * The single write boundary for today's rider report state. It runs synchronously,
+ * validates first, then releases any previous Soft Hold and applies the target state
+ * before returning, so no observer can see a half-completed bus switch.
+ */
+export function transitionRiderReport({ userId, busId, stopId = null, toState, source = 'manual' }) {
+  if (!ACTIVE_REPORT_STATES.has(toState)) throw new Error(`Unsupported rider report state: ${toState}`)
+
+  const tripDate = todayKey()
+  const active = activeReportForUser(userId, tripDate)
+  if (active?.state === 'seats_occupied') {
+    return {
+      ok: false,
+      reason: active.busId === busId ? 'already_occupied_same_bus' : 'already_occupied_other_bus',
+      active
+    }
+  }
+  if (active?.busId === busId && active.state === toState) {
+    return { ok: true, changed: false, record: active, previous: active, released: null }
+  }
+
+  const now = new Date().toISOString()
+  let target = reportFor(userId, busId, tripDate)
+  if (!target) {
+    target = {
+      id: uid(), userId, busId, stopId, tripDate, state: null, source,
+      createdAt: now, updatedAt: now
+    }
+    db.boardingReports.push(target)
+  }
+
+  const previous = active ? { ...active } : null
+  let released = null
+  if (active && active.busId !== busId) {
+    released = { ...active }
+    active.state = 'released'
+    active.releasedAt = now
+    active.releaseReason = toState === 'seats_occupied' ? 'ble_bus_switch' : 'soft_hold_transfer'
+    active.updatedAt = now
+  }
+
+  const promoted = active?.busId === busId && active.state === 'soft_hold' && toState === 'seats_occupied'
+  target.state = toState
+  target.stopId = stopId
+  target.source = source
+  target.updatedAt = now
+  delete target.releasedAt
+  delete target.releaseReason
+
+  // Re-read through the invariant guard before exposing the result.
+  activeReportForUser(userId, tripDate)
+  return { ok: true, changed: true, record: target, previous, released, promoted }
+}
+
+export function releaseRiderSoftHold({ userId, busId, reason = 'rider_release' }) {
+  const active = activeReportForUser(userId)
+  if (!active || active.state !== 'soft_hold' || active.busId !== busId) {
+    return { ok: false, reason: 'no_active_soft_hold', active }
+  }
+  const now = new Date().toISOString()
+  active.state = 'released'
+  active.releasedAt = now
+  active.releaseReason = reason
+  active.updatedAt = now
+  activeReportForUser(userId)
+  return { ok: true, changed: true, record: active }
+}
+
+export function dailyStopOverrideForUser(userId, tripDate = todayKey()) {
+  return db.dailyStopOverrides.find(item => item.userId === userId && item.tripDate === tripDate) || null
+}
+
+export function effectiveStopIdsForUser(user, tripDate = todayKey()) {
+  const override = dailyStopOverrideForUser(user.id, tripDate)
+  return override ? [override.stopId] : user.stopIds
+}
+
+export function setDailyStopOverride(userId, stopId) {
+  const tripDate = todayKey()
+  let item = dailyStopOverrideForUser(userId, tripDate)
+  const now = new Date().toISOString()
+  if (!item) {
+    item = { id: uid(), userId, stopId, tripDate, createdAt: now, updatedAt: now }
+    db.dailyStopOverrides.push(item)
+  } else {
+    item.stopId = stopId
+    item.updatedAt = now
+  }
+  return item
+}
+
+export function clearDailyStopOverride(userId) {
+  const item = dailyStopOverrideForUser(userId)
+  if (!item) return null
+  const index = db.dailyStopOverrides.indexOf(item)
+  db.dailyStopOverrides.splice(index, 1)
+  return item
+}
 
 export function activeAssignments() {
   return db.inchargeAssignments.filter(a => !a.revokedAt)

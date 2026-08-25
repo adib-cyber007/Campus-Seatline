@@ -17,10 +17,17 @@ npm run dev       # runs API (:4000) and web app (:5173) together
 
 Open http://localhost:5173
 
+The optional Admin AI assistant uses Vercel AI Gateway from the server only. Set
+`AI_GATEWAY_API_KEY` before starting the server; `ADMIN_AI_MODEL` can override the default
+`openai/gpt-5.4-mini` model. If the key is absent or the provider fails, the Admin UI shows a
+clear unavailable message and does not fabricate an answer.
+
 ## Android APK
 
 The Android client is a Capacitor shell around the same React application. Build a debug APK
 locally from `client/` with Android SDK 36 and Java 21 installed:
+
+Current Android release: **1.1** (`versionCode 2`).
 
 ```bash
 npm run android:build
@@ -39,7 +46,7 @@ must be hosted separately.
 Verify the backend core loop any time with:
 
 ```bash
-npm run smoke     # 74 end-to-end assertions, no server needed (spins its own instance)
+npm run smoke     # 105 end-to-end assertions, no server needed (spins its own instance)
 ```
 
 ### Seeded demo accounts
@@ -81,6 +88,11 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
    live to everyone, and audit-logged with old/new values.
 7. **Admin → Audit**: complete trail of report attempts (including rejected duplicates),
    arrival events, availability corrections, and authority grants/revocations.
+8. A rider can move a Soft Hold to another bus, or BLE-confirm a different bus to atomically
+   release the old hold and board the detected bus. Riders with one bus option are held once
+   automatically and can release with one tap.
+9. **Admin → AI assistant**: ask a read-only question about stops, buses, occupancy,
+   assignments, or audit activity. The module has no write tools or mutation routes.
 
 ## What's real vs mocked
 
@@ -111,23 +123,31 @@ client (React + Vite)                server (Express + Socket.IO)
 ├─ RiderPage   (holds, BLE sim,      ├─ services/
 │   prompts, live counts,            │   ├─ bleGateway.js   ← single BLE swap-in seam
 │   permission-gated Incharge        │   ├─ occupancy.js    ← one-state-per-rider machine,
-│   controls)                        │   │                     derived counts + corrections
-└─ AdminPage   (stops w/ search/     │   └─ audit.js        ← attempts/events/corrections/
-     sort/filter/pager, buses,           │                      authority grants
-     assignments, users/audit)       ├─ db.js (in-memory seed)
+│   controls, day-stop override)     │   │                     derived counts + corrections
+└─ AdminPage   (stops w/ search/     │   ├─ audit.js        ← attempts/events/corrections/
+     sort/filter/pager, buses,        │   │                     authority grants
+     assignments, users/audit/AI)    │   └─ adminAssistant.js ← read-only LLM boundary
+                                     ├─ db.js (in-memory seed + atomic state transition)
      ▲ Socket.IO rooms per user      └─ index.js (HTTP + WS bootstrap)
      └ events: occupancy · notification · prompts · arrival · audit · refresh
 ```
 
 Key domain rules implemented in `services/occupancy.js`:
 
-- **One report state per (rider, bus, trip/day)** — `BoardingReport` stores a single current
-  state (`none → soft_hold → seats_occupied`, never backwards) instead of an append-only log;
-  find-or-create is atomic within the request cycle. Every attempt (accepted or rejected) is
-  separately logged to the immutable `reportAttempts` audit trail.
+- **One active report state per (rider, trip/day), globally across buses** — the data-layer
+  transition boundary allows only `no_report`, `soft_hold(bus_id)`, or
+  `seats_occupied(bus_id)`. A bus switch releases the former Soft Hold and applies the new
+  state synchronously before any realtime broadcast. Released records remain inactive history;
+  every attempt is separately logged to the immutable `reportAttempts` audit trail.
 - Live counts are **derived**, not accumulated: `seats_occupied = confirmed_states + manual_
   adjustment` and `available = capacity − occupied − soft_holds`.
 - Soft hold "Yes" sets state `soft_hold` (idempotent); "No" logs the attempt and changes nothing.
+- A single viable bus at the rider's effective stop triggers one automatic Soft Hold evaluation
+  on the first overview for that daily trip context. Releasing it uses the same release endpoint
+  and an evaluation marker prevents recreation that day. No timing-based seat priority is used.
+- A rider can optionally select a different stop for today. BLE prompts, bus options, automatic
+  holds, and downstream notifications use that effective stop; the registered stop is unchanged
+  and becomes effective again automatically when the server's trip-day key changes.
 - Rapid/simultaneous holds, BLE detections and prompt answers are idempotent in the single-node
   runtime; a full bus rejects new holds and direct boarding reports without changing counts.
 - BLE "Yes": promotes `soft_hold → seats_occupied`, or boards directly; first confirmation for a
@@ -146,12 +166,14 @@ Key domain rules implemented in `services/occupancy.js`:
 - `POST /api/auth/login` · `POST /api/auth/register` (rider-only self-registration + stop selection)
 - `GET  /api/meta` (public stop list) · `GET /api/me`
 - Rider: `GET /api/rider/overview` · `POST /api/rider/soft-hold` · `POST /api/rider/ble/simulate` ·
+  `POST /api/rider/soft-hold/release` · `POST/DELETE /api/rider/daily-stop` ·
   `POST /api/rider/prompts/:id/respond`
 - Rider with Incharge authority (permission-gated):
   `POST /api/rider/incharge/buses/:busId/available` (edit Seats Available) ·
   `GET /api/rider/incharge/assignments`
 - Admin: `GET /api/admin/overview` · `POST/PUT /api/admin/stops[/:id]` · `POST/PUT /api/admin/buses[/:id]` ·
-  `POST /api/admin/incharge-assignments` · `DELETE /api/admin/incharge-assignments/:id` (revoke)
+  `POST /api/admin/incharge-assignments` · `DELETE /api/admin/incharge-assignments/:id` (revoke) ·
+  `POST /api/admin/assistant/query` (strictly read-only)
 
 ## Explicitly out of scope (by design)
 
@@ -164,8 +186,9 @@ Key domain rules implemented in `services/occupancy.js`:
   (= calendar day, server timezone); a true multi-trip model with per-run identifiers is deferred.
 - Atomicity of the one-state-per-rider rule relies on Node's single-threaded find-or-create
   (no await between check and write). A real DB would enforce it with a unique constraint on
-  `(rider_id, bus_id, trip_id)` + upsert-with-state-check.
-- No cancel/release path for an active soft hold yet (rider can't un-hold before boarding).
+  `(rider_id, trip_id)` plus a transactional state transition.
+- There is no separate schedule-confirmation entity in this MVP. The first rider overview for a
+  stop/day is the existing daily-trip confirmation boundary used for automatic Soft Holds.
 - Incharge Seats Available corrections are stored as a manual adjustment relative to the
   crowd-sourced count; if the correction is meant to be absolute forever, an explicit
   adjustment-reset action would need to be added.
