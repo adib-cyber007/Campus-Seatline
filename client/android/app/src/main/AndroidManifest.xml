@@ -75,10 +75,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Real beacon testing is Android 12+ only so this app never requests a
-         location permission. The signal is used solely as bus proximity. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation" />
+    <!-- Android's neverForLocation flag filters iBeacon manufacturer frames on
+         some devices. Omitting that flag restores standards-compatible iBeacon
+         scanning; the app still declares no location permission and contains no
+         GPS or location API. BLE RSSI is used only as a bus-proximity threshold. -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 </manifest>

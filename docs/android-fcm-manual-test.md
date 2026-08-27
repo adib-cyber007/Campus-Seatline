@@ -1,6 +1,6 @@
 # Android FCM manual test checklist
 
-Release under test: **1.3.0** (`versionCode 5`), upgrading from **1.2.0** (`versionCode 4`).
+Release under test: **1.3.1** (`versionCode 6`), upgrading from **1.3.0** (`versionCode 5`).
 
 ## Firebase console setup
 

@@ -577,7 +577,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                 </div>
                 <small>
                   {beaconConfig.format === 'ibeacon'
-                    ? 'Configure the simulator as iBeacon with these exact values. Some Android builds may filter iBeacon frames under the strict no-location setting.'
+                    ? 'Configure the simulator as iBeacon with these exact values. Standard manufacturer frames are enabled without requesting GPS or location permission.'
                     : 'Configure the simulator to advertise this 128-bit service UUID. Use this privacy-safe fallback if iBeacon is not detected.'}
                   {' '}One-time scans stop after 30 seconds. Closed-app alerts use a low-power filtered scan and trigger only at or above the configured signal threshold.
                 </small>

@@ -1,6 +1,6 @@
 # Android external iBeacon test
 
-Release: **1.3.0** (`versionCode 5`)
+Release: **1.3.1** (`versionCode 6`)
 
 Campus Seatline can detect either a third-party iBeacon advertisement or a custom 128-bit BLE
 service UUID in a one-time foreground scan or through optional closed-app monitoring. This test
@@ -9,7 +9,7 @@ or continuous location data.
 
 ## Requirements
 
-- A rider phone running Android 12 or newer with the code-5 APK installed.
+- A rider phone running Android 12 or newer with the code-6 APK installed.
 - A second phone, ESP32, Raspberry Pi, or BLE beacon capable of advertising iBeacon.
 - The Seatline API running and reachable from the rider phone.
 - The rider logged in with at least one bus serving their effective stop.
@@ -27,16 +27,17 @@ Configure the beacon simulator in **iBeacon** mode:
 The rider screen lets the tester change all three values. The simulator and Seatline values must
 match exactly.
 
-Android documents that the strict `neverForLocation` privacy assertion can filter some BLE
-beacon frames. If the phone cannot see iBeacon, select **Custom BLE service UUID** in Seatline and
-configure the simulator to advertise the same UUID as a 128-bit BLE service. Major and minor are
-not used in that mode.
+Android documents that its `neverForLocation` manifest assertion can filter some BLE beacon
+frames. Release 1.3.1 omits that filtering assertion to restore standard iBeacon manufacturer
+frames, while still declaring no location permission and using no GPS/location API. If a device
+or simulator remains incompatible, select **Custom BLE service UUID** and advertise the same UUID
+as a 128-bit service. Major and minor are not used in that mode.
 
 ## Test procedure
 
 1. Start the API and keep the Firebase Admin credential configured if notification testing is
    also required.
-2. Install the code-5 APK and log in as the rider.
+2. Install the code-6 APK and log in as the rider.
 3. On the second device, start the iBeacon advertisement using the UUID, major and minor above.
 4. On the rider screen, find **Detect bus proximity**.
 5. Choose which Seatline bus the test beacon represents.
@@ -62,9 +63,9 @@ Android Force stop disables all receivers and background work until the user ope
 
 ## Troubleshooting
 
-- **No matching iBeacon:** confirm UUID/major/minor match. If they do, switch both devices to
-  **Custom BLE service UUID** mode because Android may filter iBeacon under the no-location
-  privacy assertion.
+- **No matching iBeacon:** confirm the simulator emits Apple manufacturer ID `0x004C`, iBeacon
+  prefix `0x02 0x15`, and the exact UUID/major/minor. If those match but detection still fails,
+  use **Custom BLE service UUID** mode for that transmitter.
 - **No matching service UUID:** confirm the simulator advertises the UUID in its advertising
   packet, not only after a GATT connection.
 - **Nearby devices denied:** enable it under Android Settings → Apps → Campus Seatline →
