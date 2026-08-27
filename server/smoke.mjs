@@ -87,11 +87,49 @@ async function main() {
   b = ov.buses.find(x => x.busId === bus1.busId)
   check('soft-hold "no" does not cancel or downgrade', b.softHolds === 1)
 
+  const invalidBeacon = await call('/rider/ble/detected', {
+    method: 'POST', token: rider, body: { busId: bus1.busId, beacon: { uuid: 'invalid', major: 1, minor: 1 } }
+  })
+  check('external BLE endpoint rejects malformed beacon identity', invalidBeacon.status === 400)
+
+  const externalDetection = await call('/rider/ble/detected', {
+    method: 'POST',
+    token: rider,
+    body: {
+      busId: bus1.busId,
+      beacon: {
+        uuid: '7a4c1000-0000-4000-8000-000000000001',
+        major: 1,
+        minor: 1,
+        rssi: -58,
+        txPower: -59
+      }
+    }
+  })
+  check('external iBeacon detection creates the canonical BLE prompt',
+    externalDetection.status === 200 && externalDetection.data.source === 'ibeacon' &&
+    externalDetection.data.prompts[0].detectionSource === 'ibeacon')
+
+  const serviceUuidDetection = await call('/rider/ble/detected', {
+    method: 'POST',
+    token: rider,
+    body: {
+      busId: bus1.busId,
+      beacon: {
+        format: 'service_uuid',
+        uuid: '7a4c1000-0000-4000-8000-000000000001',
+        rssi: -54
+      }
+    }
+  })
+  check('privacy-safe service UUID detection reuses the canonical prompt',
+    serviceUuidDetection.status === 200 && serviceUuidDetection.data.source === 'service_uuid' &&
+    serviceUuidDetection.data.prompts[0].id === externalDetection.data.prompts[0].id)
+
   const rapidDetections = await Promise.all(Array.from({ length: 8 }, () =>
     call('/rider/ble/simulate', { method: 'POST', token: rider, body: { busId: bus1.busId } })
   ))
-  const sim = rapidDetections[0]
-  check('BLE simulation creates prompt', sim.status === 200 && sim.data.prompts.length === 1)
+  const sim = externalDetection
   check('rapid BLE detections reuse one pending prompt',
     rapidDetections.every(r => r.status === 200 && r.data.prompts.length === 1 && r.data.prompts[0].id === sim.data.prompts[0].id))
   const prompt = sim.data.prompts[0]

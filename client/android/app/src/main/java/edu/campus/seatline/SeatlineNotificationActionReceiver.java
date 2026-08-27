@@ -59,6 +59,10 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
     ) {
         if (response.isRecorded()) {
             showResult(context, "Response recorded", "Boarding response: " + displayAnswer(answer));
+            if ("yes".equals(answer)) {
+                SeatlineBackgroundBleScanner.stop(context);
+                SeatlineBeaconConfig.disable(context);
+            }
         } else if (response.isAlreadyHandled()) {
             showResult(context, "Response already handled", "This boarding prompt was already answered.");
         } else if (response.statusCode == 410) {

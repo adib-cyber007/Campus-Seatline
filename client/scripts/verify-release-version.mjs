@@ -22,8 +22,8 @@ const versionCode = Number(gradle.match(/versionCode\s+(\d+)/)?.[1])
 if (versionName !== releaseVersion) {
   throw new Error(`Android versionName ${versionName || '<missing>'} does not match ${releaseVersion}`)
 }
-if (!Number.isInteger(versionCode) || versionCode < 3) {
-  throw new Error(`Android versionCode must be an integer >= 3; found ${versionCode || '<missing>'}`)
+if (!Number.isInteger(versionCode) || versionCode < 5) {
+  throw new Error(`Android versionCode must be an integer >= 5; found ${versionCode || '<missing>'}`)
 }
 
 console.log(`Release versions aligned at ${releaseVersion} (Android versionCode ${versionCode})`)

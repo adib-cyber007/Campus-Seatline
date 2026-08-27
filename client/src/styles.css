@@ -556,7 +556,20 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .utility-icon.signal span { background: var(--brand); }
 .utility-copy h2 { margin-bottom: 4px; }
 .utility-copy p { color: var(--muted); font-size: .8rem; }
-.ble-actions { grid-column: 2; margin-top: 14px; display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 8px; }
+.ble-actions { grid-column: 2; margin-top: 14px; display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: end; gap: 8px; }
+.ble-action-buttons { display: flex; align-items: center; gap: 8px; }
+.beacon-config { grid-column: 2; margin-top: 12px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); overflow: hidden; }
+.beacon-config summary { padding: 11px 13px; cursor: pointer; color: var(--ink-soft); font-size: .74rem; font-weight: 750; }
+.beacon-config[open] summary { border-bottom: 1px solid var(--line); }
+.beacon-fields { padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.beacon-fields label { display: grid; gap: 5px; color: var(--muted); font-size: .68rem; font-weight: 700; }
+.beacon-fields input { min-width: 0; font-family: var(--font-data); }
+.beacon-fields .beacon-format, .beacon-fields .beacon-uuid { grid-column: 1 / -1; }
+.beacon-config > small { display: block; padding: 0 12px 12px; color: var(--muted); font-size: .66rem; line-height: 1.45; }
+.beacon-scan-status { grid-column: 2; margin: 10px 0 0; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .72rem; }
+.beacon-scan-status span { color: var(--muted); }
+.beacon-scan-status.active { color: var(--brand-deep); font-weight: 700; }
+.beacon-scan-status.active span { color: var(--brand); animation: pulse 1.2s infinite; }
 .notifications-card { padding: 0; overflow: hidden; }
 .notifications-card summary { min-height: 72px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
 .notifications-card summary::-webkit-details-marker { display: none; }
@@ -744,7 +757,7 @@ td small { display: block; margin-top: 2px; color: var(--muted); font-size: .65r
   .availability-editor { grid-template-columns: 1fr 1fr; }
   .availability-editor .btn { grid-column: 1 / -1; min-height: 46px; }
   .ble-card { grid-template-columns: auto 1fr; }
-  .ble-actions { grid-column: 1 / -1; }
+  .ble-actions, .beacon-config, .beacon-scan-status { grid-column: 1 / -1; }
   .admin-tabs { top: 68px; width: 100%; border-radius: 11px; }
   .assistant-query-row { grid-template-columns: 1fr; }
   .assistant-query-row .btn { width: 100%; }
@@ -794,7 +807,10 @@ td small { display: block; margin-top: 2px; color: var(--muted); font-size: .65r
   .availability-editor { grid-template-columns: 1fr; }
   .availability-editor .btn { grid-column: 1; }
   .ble-actions { grid-template-columns: 1fr; }
+  .ble-action-buttons { align-items: stretch; flex-direction: column; }
   .ble-actions .btn { min-height: 46px; }
+  .beacon-fields { grid-template-columns: 1fr; }
+  .beacon-fields .beacon-format, .beacon-fields .beacon-uuid { grid-column: 1; }
   .admin-intro .sync-pill { display: none; }
   .stoprow { flex-direction: column; }
   .stoprow > .btn { width: 100%; }

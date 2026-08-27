@@ -42,6 +42,8 @@ public class SeatlineNotificationActionsPlugin extends Plugin {
 
     @PluginMethod
     public void clear(PluginCall call) {
+        SeatlineBackgroundBleScanner.stop(getContext());
+        SeatlineBeaconConfig.clear(getContext());
         SecureSessionStore.clear(getContext());
         call.resolve(new JSObject().put("cleared", true));
     }

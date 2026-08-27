@@ -5,7 +5,7 @@ import {
 } from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
-import { sendPushIfUserOffline } from './push.js'
+import { sendPushIfUserOffline, sendPushToUser } from './push.js'
 
 export const PROMPT_TTL_MS = 120000
 
@@ -469,7 +469,7 @@ export function expirePrompt(promptId) {
   emitToUser(p.userId, 'prompts', promptsForUser(p.userId))
 }
 
-export function handleDetection({ userId, busId, stopId }) {
+export function handleDetection({ userId, busId, stopId, source = 'mock', beacon = null }) {
   const db = getDb()
   const user = userById(userId)
   const bus = busById(busId)
@@ -503,6 +503,15 @@ export function handleDetection({ userId, busId, stopId }) {
 
   const prompt = {
     id: nextId(), userId, busId, stopId, kind: 'ble_confirm',
+    detectionSource: source,
+    beacon: beacon ? {
+      format: beacon.format,
+      uuid: beacon.uuid,
+      major: beacon.major,
+      minor: beacon.minor,
+      rssi: beacon.rssi,
+      txPower: beacon.txPower
+    } : null,
     status: 'pending', tripDate: todayKey(),
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + PROMPT_TTL_MS).toISOString()
@@ -513,7 +522,7 @@ export function handleDetection({ userId, busId, stopId }) {
   const n = pushNotification(userId, `Have you boarded ${bus.name} at ${stop.name}?`, 'prompt')
   emitToUser(userId, 'notification', n)
   emitToUser(userId, 'prompts', promptsForUser(userId))
-  void sendPushIfUserOffline({
+  void sendPushToUser({
     userId,
     title: `${bus.name} at ${stop.name}`,
     body: 'Have you boarded? Tap Yes or No below.',
@@ -525,6 +534,8 @@ export function handleDetection({ userId, busId, stopId }) {
       expires_at: prompt.expiresAt,
       expires_in_ms: Math.max(new Date(prompt.expiresAt).getTime() - Date.now(), 0)
     }
+  }).catch(error => {
+    console.error('BLE confirmation FCM delivery failed:', error.message)
   })
   return prompt
 }

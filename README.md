@@ -6,7 +6,8 @@ notification-based reports from riders physically present at a stop.
 
 > **Design constraint honored everywhere:** no GPS, no continuous location tracking of buses or
 > riders — nothing is collected, stored, or displayed. The system only "knows" a bus arrived
-> because riders at that stop confirmed it via a BLE-proximity-triggered prompt (mocked in the MVP).
+> because riders at that stop confirmed it via a BLE-proximity-triggered prompt. Android supports
+> filtered foreground and closed-app BLE scanning, while the original mock trigger remains available for demos.
 
 ## Quick start
 
@@ -27,7 +28,7 @@ clear unavailable message and does not fabricate an answer.
 The Android client is a Capacitor shell around the same React application. Build a debug APK
 locally from `client/` with Android SDK 36 and Java 21 installed:
 
-Current release: **1.1.0** on root/client/server and Android `versionName` (`versionCode 3`).
+Current release: **1.3.0** on root/client/server and Android `versionName` (`versionCode 5`).
 
 ```bash
 npm run android:build
@@ -39,6 +40,7 @@ checks version parity, runs native unit tests, and publishes `campus-seatline-de
 Live FCM requires the real Firebase project file at
 `client/android/app/google-services.json` plus Firebase Admin credentials on the server. Keep both
 out of source control; see `docs/android-fcm-manual-test.md` for setup and device verification.
+External simulator setup is documented in `docs/android-external-ibeacon-test.md`.
 
 On first launch, open **Server connection** and enter the reachable root URL of the running
 Express/Socket.IO backend (for example `https://seatline.example.edu`, without `/api`). The APK
@@ -47,10 +49,20 @@ The backend is not embedded in the APK and must be hosted separately. Offline ri
 data-only FCM; BLE prompts are rendered natively with lock-screen Yes/No actions that reuse the
 same authenticated, duplicate-safe response endpoint as the in-app prompt.
 
+For external beacon testing, use an Android 12+ rider phone and a second phone or device
+broadcasting iBeacon or a custom 128-bit BLE service UUID. On the rider screen, select the bus,
+match the simulator identity, and start the corresponding scan. Seatline requests nearby-device
+permissions only and does not request GPS or location permission. A one-time scan runs for 30
+seconds in the foreground. The optional **Enable closed-app alerts** control registers a filtered,
+low-power Android scan that wakes the app process for a matching signal at the configured RSSI
+threshold, submits the authenticated detection, and receives the canonical Yes/No prompt through
+FCM. The service-UUID mode is the privacy-safe fallback for Android builds that filter iBeacon
+under the strict no-location assertion. The original **Use mock trigger** remains.
+
 Verify the backend core loop any time with:
 
 ```bash
-npm run smoke     # 114 end-to-end assertions, no server needed (spins its own instance)
+npm run smoke     # 116 end-to-end assertions, no server needed (spins its own instance)
 ```
 
 ### Seeded demo accounts
@@ -77,7 +89,8 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 2. **Rider** (`rider@campus.edu`, open in one browser profile): sees both buses auto-resolved
    from their stop. Answer **Yes** to *"Will you be boarding Shuttle-01 today?"* → Soft Holds +1,
    Available −1 — visible **live** (Socket.IO) in every other session, no refresh.
-3. Same rider: pick Shuttle-01 under *Simulate BLE detection* → trigger. The prompt
+3. Same rider: pick Shuttle-01 under *Detect bus proximity* and use either the external iBeacon
+   scan or the retained mock trigger. The prompt
    *"Have you boarded Shuttle-01 at Main Gate?"* appears with a 2-minute countdown.
 4. Answer **Yes** → Soft Hold is **promoted** to Seats Occupied (net Available unchanged),
    a `StopArrivalEvent` is created, and every user at downstream stops (e.g. `rider2@campus.edu`

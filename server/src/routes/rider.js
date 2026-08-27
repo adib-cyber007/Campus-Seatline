@@ -176,8 +176,33 @@ router.delete('/daily-stop', (req, res) => {
   res.json({ ok: true, effectiveStops: effectiveStopIdsForUser(req.user).map(stopById).filter(Boolean) })
 })
 
-router.post('/ble/simulate', (req, res) => {
+function validBeaconComponent(value) {
+  return Number.isInteger(value) && value >= 0 && value <= 65535
+}
+
+function normalizedIBeacon(value) {
+  const format = value?.format === 'service_uuid' ? 'service_uuid' : 'ibeacon'
+  const uuid = String(value?.uuid || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid) ||
+      (format === 'ibeacon' && (!validBeaconComponent(value?.major) || !validBeaconComponent(value?.minor)))) {
+    return null
+  }
+  return {
+    format,
+    uuid,
+    major: format === 'ibeacon' ? value.major : null,
+    minor: format === 'ibeacon' ? value.minor : null,
+    rssi: Number.isInteger(value.rssi) ? value.rssi : null,
+    txPower: Number.isInteger(value.txPower) ? value.txPower : null
+  }
+}
+
+function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) {
   const { busId, stopId } = req.body || {}
+  const beacon = requireBeacon ? normalizedIBeacon(req.body?.beacon) : null
+  if (requireBeacon && !beacon) {
+    return res.status(400).json({ error: 'A valid iBeacon UUID, major and minor are required' })
+  }
   const bus = busById(busId)
   if (!bus) return res.status(404).json({ error: 'Bus not found' })
   const candidates = effectiveStopIdsForUser(req.user).filter(s => bus.stopIds.includes(s))
@@ -189,11 +214,26 @@ router.post('/ble/simulate', (req, res) => {
     logRejectedBoarded({ userId: req.user.id, busId: bus.id, stopId: resolvedStopId, channel: 'ble_confirmed' })
     return res.status(409).json({ error: `You've already been counted as boarded on ${bus.name} for this trip — one report per rider per trip` })
   }
-  const prompt = submitDetection({ userId: req.user.id, busId: bus.id, stopId: resolvedStopId })
+  const detectionSource = beacon?.format || source
+  const prompt = submitDetection({
+    source: detectionSource,
+    userId: req.user.id,
+    busId: bus.id,
+    stopId: resolvedStopId,
+    beacon
+  })
   if (!prompt) {
     return res.status(409).json({ error: 'You have already been counted as boarded for this trip' })
   }
-  res.json({ ok: true, prompts: promptsForUser(req.user.id) })
+  return res.json({ ok: true, source: detectionSource, prompts: promptsForUser(req.user.id) })
+}
+
+router.post('/ble/simulate', (req, res) => {
+  return handleBleDetectionRequest(req, res, { source: 'mock' })
+})
+
+router.post('/ble/detected', (req, res) => {
+  return handleBleDetectionRequest(req, res, { source: 'ibeacon', requireBeacon: true })
 })
 
 router.post('/prompts/:id/respond', (req, res) => {

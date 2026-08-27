@@ -1,6 +1,6 @@
 # Android FCM manual test checklist
 
-Release under test: **1.1.0** (`versionCode 3`), upgrading from **1.1** (`versionCode 2`).
+Release under test: **1.3.0** (`versionCode 5`), upgrading from **1.2.0** (`versionCode 4`).
 
 ## Firebase console setup
 
@@ -14,12 +14,12 @@ Release under test: **1.1.0** (`versionCode 3`), upgrading from **1.1** (`versio
 
 - `npm --prefix client run version:check` verifies root, client, server, Android `versionName`, and the monotonic Android code floor.
 - `npm --prefix server run smoke` verifies token upsert/rotation/logout, offline-only delivery, invalid-token retirement, and the high-priority data-only action payload.
-- From `client/android`, `.\gradlew.bat testDebugUnitTest assembleDebug` compiles the native service/receiver, tests canonical response URL/body construction, and assembles the APK.
+- From `client/android`, `.\gradlew.bat testDebugUnitTest assembleDebug` compiles the native service/receiver/scanner, tests canonical response URL/body construction plus iBeacon parsing, and assembles the APK.
 - GitHub Actions runs all credential-free Android checks and publishes `campus-seatline-debug-apk`; create the FCM-enabled release artifact only in a trusted release environment containing the real `google-services.json`.
 
 ## Device and API checks
 
-1. Install the prior code-2 APK, then install the code-3 APK over it. Confirm Android updates the app without clearing rider data.
+1. Install the prior code-3 APK, then install the code-4 APK over it. Confirm Android updates the app without clearing rider data.
 2. On a fresh install, connect to the backend, log in as a rider, and accept the Android 13+ notification permission. Confirm one active device-token record is created in the same session.
 3. Register the same token repeatedly and rotate it using `previousToken`; confirm one record is updated rather than duplicated.
 4. Log out and confirm the server token is inactive and the native encrypted JWT/session is cleared before another user signs in.
