@@ -13,7 +13,9 @@ import org.json.JSONException;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -45,14 +47,18 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
         Context appContext = context.getApplicationContext();
         NETWORK_EXECUTOR.execute(() -> {
             try {
-                int status = SeatlineBleDetectionClient.post(session, config, detection);
+                SeatlineBleDetectionClient.Response response =
+                    SeatlineBleDetectionClient.post(session, config, detection);
+                int status = response.statusCode;
                 if (status == 400 || status == 401 || status == 403 || status == 404) {
                     SeatlineBeaconConfig.disable(appContext);
                     SeatlineBackgroundBleScanner.stop(appContext);
                 } else if (status < 200 || status >= 500) {
                     SeatlineBeaconConfig.releaseSubmission(appContext, now);
+                } else if (status < 300 && response.prompt != null) {
+                    showPromptNotification(appContext, session, response.prompt);
                 }
-                // A 2xx response creates the canonical FCM Yes/No prompt on the server.
+                // A 2xx response carries the canonical server prompt; FCM may update it later.
                 // A 409 is also safe: duplicate-report prevention deliberately rejected it.
             } catch (IOException | JSONException | RuntimeException ignored) {
                 // Keep monitoring; the next Android callback may retry the failed request.
@@ -61,6 +67,25 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
                 pendingResult.finish();
             }
         });
+    }
+
+    private static void showPromptNotification(
+        Context context,
+        SecureSessionStore.Session session,
+        SeatlineBleDetectionClient.Prompt prompt
+    ) {
+        Map<String, String> data = new HashMap<>();
+        data.put("event_type", "ble_confirmation_prompt");
+        data.put("event_id", prompt.id);
+        data.put("rider_id", session.userId);
+        data.put("bus_id", prompt.busId);
+        data.put("stop_id", prompt.stopId);
+        data.put("expires_at", prompt.expiresAt);
+        data.put("title", prompt.busName + " at " + prompt.stopName);
+        data.put("body", "Have you boarded? Tap Yes or No below.");
+        data.put("channel_id", SeatlineMessagingService.CHANNEL_ID);
+        data.put("native_actionable", "true");
+        SeatlineMessagingService.showDataNotification(context, data, prompt.id);
     }
 
     static Detection closestMatching(Intent intent, SeatlineBeaconConfig config) {
@@ -94,7 +119,9 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
         if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(config.format)) {
             List<ParcelUuid> serviceUuids = record.getServiceUuids();
             ParcelUuid expected = new ParcelUuid(UUID.fromString(config.uuid));
-            if (serviceUuids == null || !serviceUuids.contains(expected)) return null;
+            boolean listedService = serviceUuids != null && serviceUuids.contains(expected);
+            boolean serviceData = record.getServiceData(expected) != null;
+            if (!listedService && !serviceData) return null;
             Integer txPower = record.getTxPowerLevel() == Integer.MIN_VALUE
                 ? null
                 : record.getTxPowerLevel();

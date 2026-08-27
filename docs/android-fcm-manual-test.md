@@ -1,6 +1,6 @@
 # Android FCM manual test checklist
 
-Release under test: **1.3.1** (`versionCode 6`), upgrading from **1.3.0** (`versionCode 5`).
+Release under test: **1.3.4** (`versionCode 9`), upgrading from **1.3.3** (`versionCode 8`).
 
 ## Firebase console setup
 
@@ -14,7 +14,7 @@ Release under test: **1.3.1** (`versionCode 6`), upgrading from **1.3.0** (`vers
 
 - `npm --prefix client run version:check` verifies root, client, server, Android `versionName`, and the monotonic Android code floor.
 - `npm --prefix server run smoke` verifies token upsert/rotation/logout, offline-only delivery, invalid-token retirement, and the high-priority data-only action payload.
-- From `client/android`, `.\gradlew.bat testDebugUnitTest assembleDebug` compiles the native service/receiver/scanner, tests canonical response URL/body construction plus iBeacon parsing, and assembles the APK.
+- From `client/android`, `.\gradlew.bat testDebugUnitTest assembleDebug` compiles the native service/receiver/scanner, tests canonical response URL/body construction plus iBeacon parsing, and assembles the APK. A successful closed-app BLE response is rendered locally from the canonical server prompt while FCM remains a redundant delivery path.
 - GitHub Actions runs all credential-free Android checks and publishes `campus-seatline-debug-apk`; create the FCM-enabled release artifact only in a trusted release environment containing the real `google-services.json`.
 
 ## Device and API checks

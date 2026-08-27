@@ -75,11 +75,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <!-- Android's neverForLocation flag filters iBeacon manufacturer frames on
-         some devices. Omitting that flag restores standards-compatible iBeacon
-         scanning; the app still declares no location permission and contains no
-         GPS or location API. BLE RSSI is used only as a bus-proximity threshold. -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- Seatline uses BLE only for bus-beacon proximity and never derives device
+         location. The assertion is required on devices that otherwise suppress
+         scan results when no location permission is declared. Some Android builds
+         may filter iBeacon manufacturer frames, so the custom service UUID is the
+         privacy-safe compatibility path. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 </manifest>

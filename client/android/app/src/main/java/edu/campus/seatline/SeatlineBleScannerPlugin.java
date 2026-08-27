@@ -25,7 +25,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
-import java.util.Collections;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -225,22 +225,22 @@ public class SeatlineBleScannerPlugin extends Plugin {
             callback = createCallback();
             scanning = true;
 
-            ScanFilter filter;
+            List<ScanFilter> filters;
             if (FORMAT_SERVICE_UUID.equals(expectedFormat)) {
-                filter = new ScanFilter.Builder()
-                    .setServiceUuid(new ParcelUuid(UUID.fromString(expectedUuid)))
-                    .build();
+                filters = serviceUuidFilters(expectedUuid);
             } else {
                 byte[] prefix = new byte[] { 0x02, 0x15 };
                 byte[] mask = new byte[] { (byte) 0xff, (byte) 0xff };
-                filter = new ScanFilter.Builder()
-                    .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
-                    .build();
+                filters = java.util.Collections.singletonList(
+                    new ScanFilter.Builder()
+                        .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
+                        .build()
+                );
             }
             ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
-            scanner.startScan(Collections.singletonList(filter), settings, callback);
+            scanner.startScan(filters, settings, callback);
 
             int timeoutMs = clampTimeout(call.getInt("timeoutMs", DEFAULT_TIMEOUT_MS));
             timeoutTask = () -> stopScanInternal("timed_out");
@@ -266,7 +266,9 @@ public class SeatlineBleScannerPlugin extends Plugin {
                 if (FORMAT_SERVICE_UUID.equals(expectedFormat)) {
                     List<ParcelUuid> serviceUuids = record.getServiceUuids();
                     ParcelUuid expected = new ParcelUuid(UUID.fromString(expectedUuid));
-                    if (serviceUuids == null || !serviceUuids.contains(expected)) return;
+                    boolean listedService = serviceUuids != null && serviceUuids.contains(expected);
+                    boolean serviceData = record.getServiceData(expected) != null;
+                    if (!listedService && !serviceData) return;
                     detection.put("uuid", expectedUuid);
                     if (record.getTxPowerLevel() != Integer.MIN_VALUE) {
                         detection.put("txPower", record.getTxPowerLevel());
@@ -334,6 +336,14 @@ public class SeatlineBleScannerPlugin extends Plugin {
     private static int clampTimeout(Integer value) {
         int timeout = value == null ? DEFAULT_TIMEOUT_MS : value;
         return Math.max(5_000, Math.min(timeout, MAX_TIMEOUT_MS));
+    }
+
+    static List<ScanFilter> serviceUuidFilters(String uuid) {
+        ParcelUuid expected = new ParcelUuid(UUID.fromString(uuid));
+        List<ScanFilter> filters = new ArrayList<>();
+        filters.add(new ScanFilter.Builder().setServiceUuid(expected).build());
+        filters.add(new ScanFilter.Builder().setServiceData(expected, new byte[0]).build());
+        return filters;
     }
 
     private static boolean validComponent(Integer value) {

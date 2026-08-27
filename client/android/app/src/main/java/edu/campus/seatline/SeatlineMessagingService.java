@@ -4,6 +4,7 @@ import android.Manifest;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
@@ -32,7 +33,7 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
 
         // Preserve the standard Capacitor foreground event contract.
         PushNotificationsPlugin.sendRemoteMessage(remoteMessage);
-        showNotification(remoteMessage, data);
+        showDataNotification(this, data, remoteMessage.getMessageId());
     }
 
     @Override
@@ -41,21 +42,21 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
         PushNotificationsPlugin.onNewToken(token);
     }
 
-    private void showNotification(RemoteMessage message, Map<String, String> data) {
+    static void showDataNotification(Context context, Map<String, String> data, String messageId) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-            && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+            && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED) {
             return;
         }
 
-        createChannel();
+        createChannel(context);
         String eventId = data.get("event_id");
         String eventType = data.get("event_type");
         String title = text(data.get("title"), "Campus Seatline");
         String body = text(data.get("body"), "Open Campus Seatline for the latest update.");
-        int notificationId = positiveHash(text(eventId, message.getMessageId()));
+        int notificationId = positiveHash(text(eventId, messageId));
 
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_bus)
             .setContentTitle(title)
             .setContentText(body)
@@ -64,37 +65,47 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
-            .setContentIntent(contentIntent(data, message.getMessageId(), notificationId));
+            .setContentIntent(contentIntent(context, data, messageId, notificationId));
 
         boolean actionable = BLE_PROMPT.equals(eventType)
             && "true".equals(data.get("native_actionable"))
             && eventId != null
             && !eventId.trim().isEmpty();
         if (actionable) {
-            builder.addAction(0, "Yes", responseIntent(data, "yes", notificationId))
-                .addAction(0, "No", responseIntent(data, "no", notificationId));
+            builder.addAction(0, "Yes", responseIntent(context, data, "yes", notificationId))
+                .addAction(0, "No", responseIntent(context, data, "no", notificationId));
         }
 
-        NotificationManagerCompat.from(this).notify(notificationId, builder.build());
+        NotificationManagerCompat.from(context).notify(notificationId, builder.build());
     }
 
-    private PendingIntent contentIntent(Map<String, String> data, String messageId, int requestCode) {
-        Intent intent = new Intent(this, MainActivity.class)
+    private static PendingIntent contentIntent(
+        Context context,
+        Map<String, String> data,
+        String messageId,
+        int requestCode
+    ) {
+        Intent intent = new Intent(context, MainActivity.class)
             .setFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra("google.message_id", text(messageId, String.valueOf(requestCode)));
         for (Map.Entry<String, String> entry : data.entrySet()) {
             intent.putExtra(entry.getKey(), entry.getValue());
         }
         return PendingIntent.getActivity(
-            this,
+            context,
             requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
     }
 
-    private PendingIntent responseIntent(Map<String, String> data, String answer, int notificationId) {
-        Intent intent = new Intent(this, SeatlineNotificationActionReceiver.class)
+    private static PendingIntent responseIntent(
+        Context context,
+        Map<String, String> data,
+        String answer,
+        int notificationId
+    ) {
+        Intent intent = new Intent(context, SeatlineNotificationActionReceiver.class)
             .setAction(SeatlineNotificationActionReceiver.ACTION_RESPOND)
             .putExtra("answer", answer)
             .putExtra("event_id", data.get("event_id"))
@@ -102,14 +113,14 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
             .putExtra("notification_id", notificationId);
         int requestCode = positiveHash(data.get("event_id") + ":" + answer);
         return PendingIntent.getBroadcast(
-            this,
+            context,
             requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
     }
 
-    private void createChannel() {
+    private static void createChannel(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationChannel channel = new NotificationChannel(
             CHANNEL_ID,
@@ -119,7 +130,7 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
         channel.setDescription("Time-sensitive bus boarding and arrival updates");
         channel.enableVibration(true);
         channel.setLockscreenVisibility(NotificationCompat.VISIBILITY_PUBLIC);
-        getSystemService(NotificationManager.class).createNotificationChannel(channel);
+        context.getSystemService(NotificationManager.class).createNotificationChannel(channel);
     }
 
     static int positiveHash(String value) {

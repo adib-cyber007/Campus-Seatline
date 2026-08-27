@@ -28,7 +28,7 @@ clear unavailable message and does not fabricate an answer.
 The Android client is a Capacitor shell around the same React application. Build a debug APK
 locally from `client/` with Android SDK 36 and Java 21 installed:
 
-Current release: **1.3.1** on root/client/server and Android `versionName` (`versionCode 6`).
+Current release: **1.3.4** on root/client/server and Android `versionName` (`versionCode 9`).
 
 ```bash
 npm run android:build
@@ -55,9 +55,11 @@ match the simulator identity, and start the corresponding scan. Seatline request
 permissions only and does not request GPS or location permission. A one-time scan runs for 30
 seconds in the foreground. The optional **Enable closed-app alerts** control registers a filtered,
 low-power Android scan that wakes the app process for a matching signal at the configured RSSI
-threshold, submits the authenticated detection, and receives the canonical Yes/No prompt through
-FCM. Release 1.3.1 enables standard iBeacon manufacturer frames while still declaring no location
-permission; service-UUID mode remains the most portable fallback. The original **Use mock trigger** remains.
+threshold, and submits the authenticated detection. Release 1.3.4 immediately renders the
+canonical prompt returned by the server; FCM remains enabled as a redundant delivery path and
+updates the same notification ID. Android's `neverForLocation` assertion keeps scanning compatible
+without requesting location permission. Custom service-UUID mode is the supported portable path;
+some devices may privacy-filter iBeacon manufacturer frames. The original **Use mock trigger** remains.
 
 Verify the backend core loop any time with:
 

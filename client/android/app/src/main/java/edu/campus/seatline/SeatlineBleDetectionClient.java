@@ -1,8 +1,10 @@
 package edu.campus.seatline;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -12,7 +14,7 @@ import java.nio.charset.StandardCharsets;
 final class SeatlineBleDetectionClient {
     private SeatlineBleDetectionClient() {}
 
-    static int post(
+    static Response post(
         SecureSessionStore.Session session,
         SeatlineBeaconConfig config,
         SeatlineBeaconReceiver.Detection detection
@@ -32,8 +34,10 @@ final class SeatlineBleDetectionClient {
             connection.setFixedLengthStreamingMode(body.length);
             connection.getOutputStream().write(body);
             int statusCode = connection.getResponseCode();
-            consume(statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream());
-            return statusCode;
+            String responseBody = read(
+                statusCode >= 400 ? connection.getErrorStream() : connection.getInputStream()
+            );
+            return parseResponse(statusCode, responseBody);
         } finally {
             connection.disconnect();
         }
@@ -55,13 +59,76 @@ final class SeatlineBleDetectionClient {
             .toString();
     }
 
-    private static void consume(InputStream stream) throws IOException {
-        if (stream == null) return;
-        try (InputStream input = stream) {
-            byte[] buffer = new byte[1024];
-            while (input.read(buffer) != -1) {
-                // Consume the body so the connection can be released.
+    private static Response parseResponse(int statusCode, String responseBody) {
+        Prompt prompt = null;
+        try {
+            JSONObject root = new JSONObject(responseBody);
+            JSONArray prompts = root.optJSONArray("prompts");
+            if (prompts != null && prompts.length() > 0) {
+                JSONObject value = prompts.getJSONObject(0);
+                String id = value.optString("id", "");
+                if (!id.isEmpty()) {
+                    prompt = new Prompt(
+                        id,
+                        value.optString("busId", ""),
+                        value.optString("stopId", ""),
+                        value.optString("busName", "Bus"),
+                        value.optString("stopName", "your stop"),
+                        value.optString("expiresAt", "")
+                    );
+                }
             }
+        } catch (JSONException ignored) {
+            // Preserve the HTTP result when a response has no prompt payload.
+        }
+        return new Response(statusCode, prompt);
+    }
+
+    private static String read(InputStream stream) throws IOException {
+        if (stream == null) return "";
+        try (InputStream input = stream) {
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            byte[] buffer = new byte[1024];
+            int count;
+            while ((count = input.read(buffer)) != -1) {
+                output.write(buffer, 0, count);
+            }
+            return output.toString(StandardCharsets.UTF_8.name());
+        }
+    }
+
+    static final class Response {
+        final int statusCode;
+        final Prompt prompt;
+
+        Response(int statusCode, Prompt prompt) {
+            this.statusCode = statusCode;
+            this.prompt = prompt;
+        }
+    }
+
+    static final class Prompt {
+        final String id;
+        final String busId;
+        final String stopId;
+        final String busName;
+        final String stopName;
+        final String expiresAt;
+
+        Prompt(
+            String id,
+            String busId,
+            String stopId,
+            String busName,
+            String stopName,
+            String expiresAt
+        ) {
+            this.id = id;
+            this.busId = busId;
+            this.stopId = stopId;
+            this.busName = busName;
+            this.stopName = stopName;
+            this.expiresAt = expiresAt;
         }
     }
 }

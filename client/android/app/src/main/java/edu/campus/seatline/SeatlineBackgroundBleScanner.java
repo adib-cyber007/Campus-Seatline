@@ -12,12 +12,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.os.Build;
-import android.os.ParcelUuid;
 
 import androidx.core.content.ContextCompat;
 
 import java.util.Collections;
-import java.util.UUID;
+import java.util.List;
 
 final class SeatlineBackgroundBleScanner {
     static final String ACTION_SCAN_RESULT = "edu.campus.seatline.BACKGROUND_BLE_SCAN_RESULT";
@@ -37,7 +36,7 @@ final class SeatlineBackgroundBleScanner {
         try {
             scanner.stopScan(scanIntent(context));
             int result = scanner.startScan(
-                Collections.singletonList(filter(config)),
+                filters(config),
                 new ScanSettings.Builder()
                     .setScanMode(ScanSettings.SCAN_MODE_LOW_POWER)
                     .setCallbackType(ScanSettings.CALLBACK_TYPE_ALL_MATCHES)
@@ -63,17 +62,17 @@ final class SeatlineBackgroundBleScanner {
         }
     }
 
-    static ScanFilter filter(SeatlineBeaconConfig config) {
+    static List<ScanFilter> filters(SeatlineBeaconConfig config) {
         if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(config.format)) {
-            return new ScanFilter.Builder()
-                .setServiceUuid(new ParcelUuid(UUID.fromString(config.uuid)))
-                .build();
+            return SeatlineBleScannerPlugin.serviceUuidFilters(config.uuid);
         }
         byte[] prefix = new byte[] { 0x02, 0x15 };
         byte[] mask = new byte[] { (byte) 0xff, (byte) 0xff };
-        return new ScanFilter.Builder()
-            .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
-            .build();
+        return Collections.singletonList(
+            new ScanFilter.Builder()
+                .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
+                .build()
+        );
     }
 
     static PendingIntent scanIntent(Context context) {
