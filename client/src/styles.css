@@ -564,6 +564,11 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .beacon-fields { padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
 .beacon-fields label { display: grid; gap: 5px; color: var(--muted); font-size: .68rem; font-weight: 700; }
 .beacon-fields input { min-width: 0; font-family: var(--font-data); }
+.beacon-passport { min-width: 0; padding: 11px 12px; display: grid; gap: 5px; border: 1px solid #cbd9f7; border-radius: 10px; background: linear-gradient(135deg, #f7faff, #eef4ff); }
+.beacon-passport > span { color: var(--brand-deep); font-size: .65rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.beacon-passport code { min-width: 0; overflow-wrap: anywhere; color: var(--ink); font: 650 .75rem/1.45 var(--font-data); }
+.beacon-passport small { color: var(--muted); font-size: .64rem; }
+.admin-beacon { margin: 14px 0; }
 .beacon-fields .beacon-format, .beacon-fields .beacon-uuid { grid-column: 1 / -1; }
 .beacon-config > small { display: block; padding: 0 12px 12px; color: var(--muted); font-size: .66rem; line-height: 1.45; }
 .beacon-scan-status { grid-column: 2; margin: 10px 0 0; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: .72rem; }

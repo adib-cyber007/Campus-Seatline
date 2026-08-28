@@ -340,6 +340,15 @@ function EditStop({ stop, buses, riders, assignments, reload, done, toast }) {
   )
 }
 
+function BeaconPassport({ beacon }) {
+  return (
+    <div className="beacon-passport admin-beacon" aria-label="Server-assigned bus beacon identity">
+      <span>Bus beacon · server assigned</span>
+      <code>{beacon?.serviceUuid?.toUpperCase() || 'Not assigned'}</code>
+      {beacon && <small>Legacy BLE · {beacon.advertisingIntervalMs} ms · {beacon.active ? 'Active' : 'Inactive'}</small>}
+    </div>
+  )
+}
 function BusesTab({ data, reload, toast }) {
   const [editingId, setEditingId] = useState(null)
 
@@ -360,6 +369,7 @@ function BusesTab({ data, reload, toast }) {
                   ? <span className="status-label covered"><span aria-hidden="true">✓</span>{b.inchargeNames.join(', ')}</span>
                   : <span className="status-label attention"><span aria-hidden="true">!</span>No Incharge coverage</span>}
               </div>
+              <BeaconPassport beacon={b.beacon} />
               <ol className="route-rail compact">
                 {b.stopIds.map((id, index) => {
                   const s = data.stops.find(x => x.id === id)
@@ -430,6 +440,7 @@ function EditBus({ bus, data, done, toast }) {
         <label className="field-label">Bus name or number<input value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="field-label">Seat capacity<input type="number" min="1" value={capacity} onChange={e => setCapacity(e.target.value)} /></label>
       </div>
+      <BeaconPassport beacon={bus.beacon} />
       <OrderedStopPicker all={data.stops} value={stopIds} onChange={setStopIds} />
       <p className="field-help">Incharge authority is managed separately in the Incharge section.</p>
       <div className="row">

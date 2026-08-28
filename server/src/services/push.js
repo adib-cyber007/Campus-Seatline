@@ -1,7 +1,7 @@
 import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app'
 import { getMessaging } from 'firebase-admin/messaging'
 import {
-  activeDeviceTokensForUser, deactivateDeviceTokenValue
+  activeDeviceTokensForUser, deactivateDeviceTokenValue, hasDatabaseContext, runDatabaseTransaction
 } from '../db.js'
 import { isUserConnected } from '../realtime.js'
 
@@ -46,7 +46,12 @@ function stringData(data) {
 }
 
 export async function sendPushToUser({ userId, title, body, data }, { transport = firebaseTransport } = {}) {
-  const records = activeDeviceTokensForUser(userId)
+  const records = hasDatabaseContext()
+    ? activeDeviceTokensForUser(userId)
+    : await runDatabaseTransaction(
+      () => structuredClone(activeDeviceTokensForUser(userId)),
+      { persist: false }
+    )
   if (records.length === 0) return { sent: 0, skipped: 'no_active_tokens' }
 
   const message = {
@@ -69,11 +74,15 @@ export async function sendPushToUser({ userId, title, body, data }, { transport 
   const response = await transport(message)
   if (!response) return { sent: 0, skipped: 'firebase_not_configured' }
 
-  response.responses?.forEach((item, index) => {
-    if (!item.success && invalidTokenCodes.has(item.error?.code)) {
-      deactivateDeviceTokenValue(message.tokens[index], item.error.code)
-    }
-  })
+  const invalidTokens = response.responses?.flatMap((item, index) =>
+    !item.success && invalidTokenCodes.has(item.error?.code)
+      ? [{ token: message.tokens[index], reason: item.error.code }]
+      : []) || []
+  if (invalidTokens.length > 0) {
+    await runDatabaseTransaction(() => {
+      for (const item of invalidTokens) deactivateDeviceTokenValue(item.token, item.reason)
+    })
+  }
   return {
     sent: response.successCount || 0,
     failed: response.failureCount || 0

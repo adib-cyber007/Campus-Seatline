@@ -11,6 +11,10 @@ notification-based reports from riders physically present at a stop.
 
 ## Quick start
 
+PostgreSQL 17+ is required. Create a database and a non-superuser application role, copy
+`server/.env.example` to `server/.env`, and set `DATABASE_URL` to that database before starting.
+The schema is applied automatically and seed data is created only when the database is empty.
+
 ```bash
 npm run setup     # installs root + server + client deps
 npm run dev       # runs API (:4000) and web app (:5173) together
@@ -49,22 +53,15 @@ The backend is not embedded in the APK and must be hosted separately. Offline ri
 data-only FCM; BLE prompts are rendered natively with lock-screen Yes/No actions that reuse the
 same authenticated, duplicate-safe response endpoint as the in-app prompt.
 
-For external beacon testing, use an Android 12+ rider phone and a second phone or device
-broadcasting iBeacon or a custom 128-bit BLE service UUID. On the rider screen, select the bus,
-match the simulator identity, and start the corresponding scan. Seatline requests nearby-device
-permissions only and does not request GPS or location permission. A one-time scan runs for 30
-seconds in the foreground. The optional **Enable closed-app alerts** control registers a filtered,
-low-power Android scan that wakes the app process for a matching signal at the configured RSSI
-threshold, and submits the authenticated detection. Release 1.3.4 immediately renders the
-canonical prompt returned by the server; FCM remains enabled as a redundant delivery path and
-updates the same notification ID. Android's `neverForLocation` assertion keeps scanning compatible
-without requesting location permission. Custom service-UUID mode is the supported portable path;
-some devices may privacy-filter iBeacon manufacturer frames. The original **Use mock trigger** remains.
+For external beacon testing, use an Android 12+ rider phone and a transmitter broadcasting the target bus's server-assigned custom 128-bit BLE service UUID. Each bus receives a unique identity stored in PostgreSQL; Admin and rider screens display it read-only, and `/rider/ble/detected` independently rejects unknown UUIDs or UUIDs mapped to a different submitted bus. Configure the transmitter for Legacy BLE with a 350 ms interval, then choose the bus and tune only the RSSI threshold in Seatline. The app requests Nearby devices only and does not request GPS or location permission.
+
+A one-time scan runs for 30 seconds in the foreground. **Enable closed-app alerts** registers a filtered low-power Android scan that can wake the app process for the matching service UUID and submit the authenticated detection. Release 1.3.4 renders the canonical server prompt locally; FCM remains a redundant delivery path and updates the same notification ID. The original **Use mock trigger** remains for occupancy-flow demonstrations without hardware, but it does not test UUID mapping. See `docs/bus-beacon-deployment.md` and `docs/android-external-ibeacon-test.md`.
 
 Verify the backend core loop any time with:
 
 ```bash
-npm run smoke     # 116 end-to-end assertions, no server needed (spins its own instance)
+npm run smoke     # 121 end-to-end assertions, no server needed (spins its own instance)
+npm --prefix server run verify:postgres  # real process restart + DB constraint proof
 ```
 
 ### Seeded demo accounts
@@ -91,8 +88,8 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 2. **Rider** (`rider@campus.edu`, open in one browser profile): sees both buses auto-resolved
    from their stop. Answer **Yes** to *"Will you be boarding Shuttle-01 today?"* → Soft Holds +1,
    Available −1 — visible **live** (Socket.IO) in every other session, no refresh.
-3. Same rider: pick Shuttle-01 under *Detect bus proximity* and use either the external iBeacon
-   scan or the retained mock trigger. The prompt
+3. Same rider: pick Shuttle-01 under *Detect bus proximity* and scan for its read-only, server-assigned
+   service UUID, or use the retained mock trigger when hardware is unavailable. The prompt
    *"Have you boarded Shuttle-01 at Main Gate?"* appears with a 2-minute countdown.
 4. Answer **Yes** → Soft Hold is **promoted** to Seats Occupied (net Available unchanged),
    a `StopArrivalEvent` is created, and every user at downstream stops (e.g. `rider2@campus.edu`
@@ -121,7 +118,7 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 | Notifications    | Socket.IO in-app + offline Android FCM with native Yes/No actions | Configure Firebase credentials and production monitoring |
 | Real-time sync   | Socket.IO (real)                                               | same, or Firestore streams                |
 | Auth             | JWT with roles (rider/admin; Incharge = granted authority), scrypt hashes | Firebase Auth / hardened JWT rotation |
-| Storage          | **In-memory** (resets on restart)                              | Firestore/Postgres persistence            |
+| Storage          | PostgreSQL normalized tables + transactional transitions       | Managed PostgreSQL, backups and monitoring |
 
 ### Where real BLE plugs in
 
@@ -146,14 +143,16 @@ client (React + Vite)                server (Express + Socket.IO)
 └─ AdminPage   (stops w/ search/     │   ├─ audit.js        ← attempts/events/corrections/
      sort/filter/pager, buses,        │   │                     authority grants
      assignments, users/audit/AI)    │   └─ adminAssistant.js ← read-only LLM boundary
-                                     ├─ db.js (in-memory seed + atomic state transition)
+                                     ├─ db.js + database/ (PostgreSQL transaction boundary,
+                                     │                     schema + normalized persistence)
      ▲ Socket.IO rooms per user      └─ index.js (HTTP + WS bootstrap)
      └ events: occupancy · notification · prompts · arrival · audit · refresh
 ```
 
 Key domain rules implemented in `services/occupancy.js`:
 
-- **One active report state per (rider, trip/day), globally across buses** — the data-layer
+- **One active report state per (rider, trip/day), globally across buses** — a PostgreSQL
+  partial unique index enforces the invariant below the application layer, while the data-layer
   transition boundary allows only `no_report`, `soft_hold(bus_id)`, or
   `seats_occupied(bus_id)`. A bus switch releases the former Soft Hold and applies the new
   state synchronously before any realtime broadcast. Released records remain inactive history;
@@ -167,8 +166,9 @@ Key domain rules implemented in `services/occupancy.js`:
 - A rider can optionally select a different stop for today. BLE prompts, bus options, automatic
   holds, and downstream notifications use that effective stop; the registered stop is unchanged
   and becomes effective again automatically when the server's trip-day key changes.
-- Rapid/simultaneous holds, BLE detections and prompt answers are idempotent in the single-node
-  runtime; a full bus rejects new holds and direct boarding reports without changing counts.
+- Rapid/simultaneous holds, BLE detections and prompt answers are serialized in PostgreSQL
+  transactions and remain idempotent; a full bus rejects new holds and direct boarding reports
+  without changing counts.
 - BLE "Yes": promotes `soft_hold → seats_occupied`, or boards directly; first confirmation for a
   bus/stop creates the `StopArrivalEvent` and fans out notifications to downstream stops' users
   plus riders holding Incharge authority covering that bus/stop. Repeat attempts after boarding
@@ -203,9 +203,10 @@ Key domain rules implemented in `services/occupancy.js`:
 
 - Multi-trip-per-day model: arrival events and rider report states are scoped by `tripDate`
   (= calendar day, server timezone); a true multi-trip model with per-run identifiers is deferred.
-- Atomicity of the one-state-per-rider rule relies on Node's single-threaded find-or-create
-  (no await between check and write). A real DB would enforce it with a unique constraint on
-  `(rider_id, trip_id)` plus a transactional state transition.
+- The current PostgreSQL adapter deliberately serializes request-scoped domain transitions with
+  a transaction advisory lock so the existing synchronous business rules remain atomic. A future
+  high-throughput optimization can replace full-state persistence with row-level repositories
+  without changing the verified domain behavior.
 - There is no separate schedule-confirmation entity in this MVP. The first rider overview for a
   stop/day is the existing daily-trip confirmation boundary used for automatic Soft Holds.
 - Incharge Seats Available corrections are stored as a manual adjustment relative to the
@@ -215,7 +216,7 @@ Key domain rules implemented in `services/occupancy.js`:
   covers it directly (stop scope) or via a bus passing through it (bus scope).
 - Prompt expiry uses in-process timers; a crash could orphan pending prompts (lazy expiry on read
   covers reads, but no background sweeper across restarts).
-- Single-node in-memory store: no concurrency control, replication, or offline queueing.
+- Database backups, replication, and production monitoring are configured in later deployment phases.
 - Notification fan-out is instant-only; no digest/retry if a client is offline (feed history
   partially covers this).
 
@@ -223,7 +224,7 @@ Key domain rules implemented in `services/occupancy.js`:
 
 1. Swap the mocked BLE trigger for real hardware scanning (see seam above); deploy beacons per
    bus and define RSSI/proximity thresholds.
-2. Replace in-memory store with Firestore/Postgres; move timers to durable jobs.
+2. PostgreSQL persistence is complete; move timers to durable jobs during backend hardening.
 3. Complete Firebase console/signing setup and validate killed-app actions across supported Android devices.
 4. Harden auth (secret rotation, refresh tokens), add rate limiting and input validation layers.
 5. Model multiple trips/day and service disruptions; add admin tooling for day resets.

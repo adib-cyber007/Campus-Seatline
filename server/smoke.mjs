@@ -1,10 +1,15 @@
 import { app } from './src/app.js'
-import { getDb, occupancyOf, effectiveStopIdsForUser } from './src/db.js'
+import { getDb, occupancyOf, effectiveStopIdsForUser, resetDatabase } from './src/db.js'
 import { handleDetection, snapshot } from './src/services/occupancy.js'
 import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
 import { sendPushIfUserOffline } from './src/services/push.js'
 import { setIo } from './src/realtime.js'
 
+if (process.env.SEATLINE_TEST_SCHEMA !== 'seatline_test') {
+  throw new Error('Refusing to reset a non-test database. Run this test through npm run smoke.')
+}
+
+await resetDatabase()
 const server = app.listen(0)
 const base = `http://127.0.0.1:${server.address().port}/api`
 
@@ -87,28 +92,51 @@ async function main() {
   b = ov.buses.find(x => x.busId === bus1.busId)
   check('soft-hold "no" does not cancel or downgrade', b.softHolds === 1)
 
+  const otherBus = ov.buses.find(item => item.busId !== bus1.busId)
+  check('each rider-visible bus has a unique server-assigned 128-bit service UUID',
+    Boolean(bus1.beacon?.serviceUuid) && Boolean(otherBus?.beacon?.serviceUuid) &&
+    bus1.beacon.serviceUuid !== otherBus.beacon.serviceUuid &&
+    bus1.beacon.advertisingMode === 'legacy' &&
+    bus1.beacon.advertisingIntervalMs >= 250 && bus1.beacon.advertisingIntervalMs <= 500)
+
   const invalidBeacon = await call('/rider/ble/detected', {
-    method: 'POST', token: rider, body: { busId: bus1.busId, beacon: { uuid: 'invalid', major: 1, minor: 1 } }
+    method: 'POST', token: rider,
+    body: { busId: bus1.busId, beacon: { format: 'ibeacon', uuid: 'invalid', major: 1, minor: 1 } }
   })
-  check('external BLE endpoint rejects malformed beacon identity', invalidBeacon.status === 400)
+  check('external BLE endpoint rejects malformed or unsupported beacon identity', invalidBeacon.status === 400)
+
+  const unknownBeacon = await call('/rider/ble/detected', {
+    method: 'POST', token: rider,
+    body: {
+      busId: bus1.busId,
+      beacon: { format: 'service_uuid', uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', rssi: -58 }
+    }
+  })
+  check('server rejects a valid UUID that is not assigned to any bus',
+    unknownBeacon.status === 422 && unknownBeacon.data.code === 'UNKNOWN_BEACON_UUID')
+
+  const mismatchBeacon = await call('/rider/ble/detected', {
+    method: 'POST', token: rider,
+    body: {
+      busId: bus1.busId,
+      beacon: { format: 'service_uuid', uuid: otherBus.beacon.serviceUuid, rssi: -58 }
+    }
+  })
+  check('server rejects a beacon UUID submitted for the wrong bus before creating a prompt',
+    mismatchBeacon.status === 409 && mismatchBeacon.data.code === 'BEACON_BUS_MISMATCH' &&
+    getDb().prompts.every(item => item.userId !== login.data.user.id))
 
   const externalDetection = await call('/rider/ble/detected', {
     method: 'POST',
     token: rider,
     body: {
       busId: bus1.busId,
-      beacon: {
-        uuid: '7a4c1000-0000-4000-8000-000000000001',
-        major: 1,
-        minor: 1,
-        rssi: -58,
-        txPower: -59
-      }
+      beacon: { format: 'service_uuid', uuid: bus1.beacon.serviceUuid, rssi: -54 }
     }
   })
-  check('external iBeacon detection creates the canonical BLE prompt',
-    externalDetection.status === 200 && externalDetection.data.source === 'ibeacon' &&
-    externalDetection.data.prompts[0].detectionSource === 'ibeacon')
+  check('legitimate matched service UUID creates the canonical BLE prompt',
+    externalDetection.status === 200 && externalDetection.data.source === 'service_uuid' &&
+    externalDetection.data.prompts[0].detectionSource === 'service_uuid')
 
   const serviceUuidDetection = await call('/rider/ble/detected', {
     method: 'POST',
@@ -117,7 +145,7 @@ async function main() {
       busId: bus1.busId,
       beacon: {
         format: 'service_uuid',
-        uuid: '7a4c1000-0000-4000-8000-000000000001',
+        uuid: bus1.beacon.serviceUuid,
         rssi: -54
       }
     }
@@ -279,6 +307,18 @@ async function main() {
   check('link synced bidirectionally',
     adminOv.stops.find(s => s.id === newStop.data.stop.id).busIds.includes(newBus.data.bus.id) &&
     adminOv.buses.find(x => x.id === newBus.data.bus.id).stopIds.includes(newStop.data.stop.id))
+  check('new bus receives a unique server-owned BLE identity',
+    Boolean(newBus.data.bus.beacon?.serviceUuid) &&
+    adminOv.buses.filter(item => item.id !== newBus.data.bus.id)
+      .every(item => item.beacon?.serviceUuid !== newBus.data.bus.beacon.serviceUuid))
+
+  const attemptedBeaconOverwrite = await call(`/admin/buses/${newBus.data.bus.id}`, {
+    method: 'PUT', token: adminTok,
+    body: { beacon: { serviceUuid: '00000000-0000-4000-8000-000000000001' } }
+  })
+  check('bus edits cannot overwrite the server-owned BLE identity',
+    attemptedBeaconOverwrite.status === 200 &&
+    attemptedBeaconOverwrite.data.bus.beacon.serviceUuid === newBus.data.bus.beacon.serviceUuid)
 
   const regBad = await call('/auth/register', {
     method: 'POST',

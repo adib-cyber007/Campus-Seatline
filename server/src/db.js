@@ -1,4 +1,8 @@
 import crypto from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { applySchema, closeDatabase, withTransaction } from './database/client.js'
+import { emptyState, loadState, saveState } from './database/stateStore.js'
+import { beaconIdentityForBus } from './beaconIdentity.js'
 
 const uid = () => crypto.randomUUID()
 
@@ -15,25 +19,21 @@ export function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(candidate, 'hex'))
 }
 
-const db = {
-  users: [],
-  stops: [],
-  buses: [],
-  occupancy: {},
-  boardingReports: [],
-  reportAttempts: [],
-  inchargeAssignments: [],
-  arrivalEvents: [],
-  prompts: [],
-  notifications: [],
-  overrides: [],
-  dailyStopOverrides: [],
-  autoHoldEvaluations: [],
-  deviceTokens: []
+const stateStorage = new AsyncLocalStorage()
+let committedState = emptyState()
+const currentState = () => {
+  const context = stateStorage.getStore()
+  return context?.open ? context.state : committedState
 }
+const db = new Proxy({}, {
+  get(_target, property) { return currentState()[property] },
+  set(_target, property, value) { currentState()[property] = value; return true },
+  ownKeys() { return Reflect.ownKeys(currentState()) },
+  getOwnPropertyDescriptor() { return { enumerable: true, configurable: true } }
+})
 
 export const nextId = uid
-export const getDb = () => db
+export const getDb = () => currentState()
 
 export function todayKey() {
   const d = new Date()
@@ -321,8 +321,8 @@ function seed() {
   db.users.push(admin, inch1, r1, r2, r3)
 
   db.buses.push(
-    { id: b1, name: 'Shuttle-01', capacity: 40, stopIds: [s1, s2, s3] },
-    { id: b2, name: 'Express-02', capacity: 24, stopIds: [s1, s4, s5] }
+    { id: b1, name: 'Shuttle-01', capacity: 40, stopIds: [s1, s2, s3], beacon: beaconIdentityForBus(b1) },
+    { id: b2, name: 'Express-02', capacity: 24, stopIds: [s1, s4, s5], beacon: beaconIdentityForBus(b2) }
   )
 
   db.inchargeAssignments.push({
@@ -337,4 +337,88 @@ function seed() {
   })
 }
 
-seed()
+const DATABASE_LOCK_ID = 736328451
+
+export function hasDatabaseContext() {
+  return Boolean(stateStorage.getStore()?.open)
+}
+
+export async function runDatabaseTransaction(work, { persist = true } = {}) {
+  const existing = stateStorage.getStore()
+  if (existing?.open) return work(existing.state)
+
+  return withTransaction(async client => {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [DATABASE_LOCK_ID])
+    const state = await loadState(client)
+    const context = { state, client, open: true }
+    try {
+      const result = await stateStorage.run(context, () => work(state))
+      if (persist) await saveState(client, state)
+      committedState = structuredClone(state)
+      return result
+    } finally {
+      context.open = false
+    }
+  }, { isolation: 'READ COMMITTED', retries: 0 })
+}
+
+export async function resetDatabase({ withSeed = true } = {}) {
+  if (process.env.SEATLINE_TEST_SCHEMA !== 'seatline_test') {
+    throw new Error('Refusing to reset a non-test database')
+  }
+  return withTransaction(async client => {
+    await client.query('SELECT pg_advisory_xact_lock($1)', [DATABASE_LOCK_ID])
+    const state = emptyState()
+    const context = { state, client, open: true }
+    try {
+      if (withSeed) await stateStorage.run(context, async () => seed())
+      await saveState(client, state)
+      committedState = structuredClone(state)
+    } finally {
+      context.open = false
+    }
+  }, { isolation: 'READ COMMITTED', retries: 0 })
+}
+
+export function databaseMiddleware(req, res, next) {
+  const originals = {
+    json: res.json.bind(res),
+    send: res.send.bind(res),
+    end: res.end.bind(res)
+  }
+  let captured = false
+  let resolveResponse
+  const response = new Promise(resolve => { resolveResponse = resolve })
+  const capture = type => (...args) => {
+    if (!captured) {
+      captured = true
+      resolveResponse({ type, args })
+    }
+    return res
+  }
+  res.json = capture('json')
+  res.send = capture('send')
+  res.end = capture('end')
+
+  runDatabaseTransaction(async () => {
+    next()
+    return response
+  }).then(pending => {
+    res.json = originals.json
+    res.send = originals.send
+    res.end = originals.end
+    originals[pending.type](...pending.args)
+  }).catch(error => {
+    res.json = originals.json
+    res.send = originals.send
+    res.end = originals.end
+    next(error)
+  })
+}
+
+export { closeDatabase }
+
+await applySchema()
+await runDatabaseTransaction(async state => {
+  if (state.users.length === 0) seed()
+})

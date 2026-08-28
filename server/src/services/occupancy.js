@@ -1,7 +1,7 @@
 import {
   getDb, nextId, todayKey, occupancyOf, pushNotification, busById, stopById, userById,
   busesForStops, activeReportForUser, transitionRiderReport, releaseRiderSoftHold,
-  effectiveStopIdsForUser
+  effectiveStopIdsForUser, runDatabaseTransaction
 } from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
@@ -517,7 +517,11 @@ export function handleDetection({ userId, busId, stopId, source = 'mock', beacon
     expiresAt: new Date(now + PROMPT_TTL_MS).toISOString()
   }
   db.prompts.push(prompt)
-  setTimeout(() => expirePrompt(prompt.id), PROMPT_TTL_MS + 300)
+  setTimeout(() => {
+    void runDatabaseTransaction(() => expirePrompt(prompt.id)).catch(error => {
+      console.error('Prompt expiry persistence failed:', error.message)
+    })
+  }, PROMPT_TTL_MS + 300)
 
   const n = pushNotification(userId, `Have you boarded ${bus.name} at ${stop.name}?`, 'prompt')
   emitToUser(userId, 'notification', n)

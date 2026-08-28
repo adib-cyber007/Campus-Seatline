@@ -12,6 +12,7 @@ import {
 } from '../services/occupancy.js'
 import { submitDetection } from '../services/bleGateway.js'
 import { emitToUser } from '../realtime.js'
+import { normalizeServiceUuid } from '../beaconIdentity.js'
 
 const router = Router()
 router.use(authenticate, requireRole('rider'))
@@ -70,6 +71,7 @@ router.get('/overview', (req, res) => {
         stopIds: b.stopIds,
         stopNames: b.stopIds.map(id => stopById(id)?.name || id),
         passedStopIds: passedStopIdsFor(b.id),
+        beacon: b.beacon,
         inchargeAuthority: authorityBusIds.includes(b.id)
       }
     })
@@ -176,22 +178,14 @@ router.delete('/daily-stop', (req, res) => {
   res.json({ ok: true, effectiveStops: effectiveStopIdsForUser(req.user).map(stopById).filter(Boolean) })
 })
 
-function validBeaconComponent(value) {
-  return Number.isInteger(value) && value >= 0 && value <= 65535
-}
-
-function normalizedIBeacon(value) {
-  const format = value?.format === 'service_uuid' ? 'service_uuid' : 'ibeacon'
-  const uuid = String(value?.uuid || '').trim().toLowerCase()
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(uuid) ||
-      (format === 'ibeacon' && (!validBeaconComponent(value?.major) || !validBeaconComponent(value?.minor)))) {
-    return null
-  }
+function normalizedServiceBeacon(value) {
+  const uuid = normalizeServiceUuid(value?.uuid)
+  if (value?.format !== 'service_uuid' || !uuid) return null
   return {
-    format,
+    format: 'service_uuid',
     uuid,
-    major: format === 'ibeacon' ? value.major : null,
-    minor: format === 'ibeacon' ? value.minor : null,
+    major: null,
+    minor: null,
     rssi: Number.isInteger(value.rssi) ? value.rssi : null,
     txPower: Number.isInteger(value.txPower) ? value.txPower : null
   }
@@ -199,12 +193,28 @@ function normalizedIBeacon(value) {
 
 function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) {
   const { busId, stopId } = req.body || {}
-  const beacon = requireBeacon ? normalizedIBeacon(req.body?.beacon) : null
+  const beacon = requireBeacon ? normalizedServiceBeacon(req.body?.beacon) : null
   if (requireBeacon && !beacon) {
-    return res.status(400).json({ error: 'A valid iBeacon UUID, major and minor are required' })
+    return res.status(400).json({ error: 'A valid server-assigned custom BLE service UUID is required' })
   }
   const bus = busById(busId)
   if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  if (requireBeacon) {
+    const mappedBus = getDb().buses.find(candidate =>
+      candidate.beacon?.active && candidate.beacon.serviceUuid === beacon.uuid)
+    if (!mappedBus) {
+      return res.status(422).json({
+        error: 'This BLE service UUID is not assigned to an active Campus Seatline bus',
+        code: 'UNKNOWN_BEACON_UUID'
+      })
+    }
+    if (mappedBus.id !== bus.id) {
+      return res.status(409).json({
+        error: `Beacon identity belongs to ${mappedBus.name}, not ${bus.name}`,
+        code: 'BEACON_BUS_MISMATCH'
+      })
+    }
+  }
   const candidates = effectiveStopIdsForUser(req.user).filter(s => bus.stopIds.includes(s))
   if (candidates.length === 0) {
     return res.status(403).json({ error: 'Bus does not pass your effective stop today' })

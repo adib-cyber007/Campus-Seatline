@@ -6,6 +6,7 @@ import meRoutes from './routes/me.js'
 import riderRoutes from './routes/rider.js'
 import adminRoutes from './routes/admin.js'
 import { onDetection } from './services/bleGateway.js'
+import { databaseMiddleware } from './db.js'
 import { handleDetection } from './services/occupancy.js'
 
 onDetection(handleDetection)
@@ -14,6 +15,7 @@ export const app = express()
 
 app.use(cors())
 app.use(express.json())
+app.use(databaseMiddleware)
 
 app.get('/api/health', (req, res) => res.json({ ok: true, gps: 'not-used-anywhere' }))
 

@@ -2,19 +2,13 @@ import { Capacitor, registerPlugin } from '@capacitor/core'
 
 const NativeBleScanner = registerPlugin('SeatlineBleScanner')
 
-export const DEFAULT_TEST_BEACON = Object.freeze({
-  format: 'ibeacon',
-  uuid: '7A4C1000-0000-4000-8000-000000000001',
-  major: 1,
-  minor: 1,
-  minRssi: -75
-})
+export const DEFAULT_BEACON_MIN_RSSI = -75
 
 export function supportsNativeBeaconScan() {
   return Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android'
 }
 
-export async function startIBeaconScan({ format = 'ibeacon', uuid, major, minor, minRssi = -75, timeoutMs = 30000, onDetected, onState }) {
+export async function startServiceUuidScan({ uuid, minRssi = DEFAULT_BEACON_MIN_RSSI, timeoutMs = 30000, onDetected, onState }) {
   if (!supportsNativeBeaconScan()) {
     throw new Error('Real beacon scanning is available only in the Android app')
   }
@@ -41,10 +35,8 @@ export async function startIBeaconScan({ format = 'ibeacon', uuid, major, minor,
       throw new Error('Real beacon testing requires an Android 12+ phone with Bluetooth Low Energy')
     }
     await NativeBleScanner.startScan({
-      format,
+      format: 'service_uuid',
       uuid: String(uuid || '').trim(),
-      major: Number(major),
-      minor: Number(minor),
       minRssi: Number(minRssi),
       timeoutMs
     })
@@ -69,21 +61,16 @@ export async function getBackgroundBeaconStatus() {
 
 export async function enableBackgroundBeaconMonitoring({
   busId,
-  format = 'ibeacon',
   uuid,
-  major,
-  minor,
-  minRssi = -75
+  minRssi = DEFAULT_BEACON_MIN_RSSI
 }) {
   if (!supportsNativeBeaconScan()) {
     throw new Error('Background beacon monitoring is available only in the Android app')
   }
   return NativeBleScanner.enableBackgroundScan({
     busId: String(busId || '').trim(),
-    format,
+    format: 'service_uuid',
     uuid: String(uuid || '').trim(),
-    major: Number(major),
-    minor: Number(minor),
     minRssi: Number(minRssi)
   })
 }

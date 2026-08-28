@@ -5,6 +5,7 @@ import { snapshot } from '../services/occupancy.js'
 import { auditSnapshot } from '../services/audit.js'
 import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
+import { beaconIdentityForBus } from '../beaconIdentity.js'
 
 const router = Router()
 router.use(authenticate, requireRole('admin'))
@@ -178,7 +179,11 @@ router.post('/buses', (req, res) => {
   const ids = Array.isArray(stopIds) ? [...new Set(stopIds)] : []
   if (ids.some(id => !stopById(id))) return res.status(400).json({ error: 'Unknown stop in path' })
 
-  const bus = { id: nextId(), name: String(name).trim(), capacity: cap, stopIds: ids }
+  const id = nextId()
+  const bus = {
+    id, name: String(name).trim(), capacity: cap, stopIds: ids,
+    beacon: beaconIdentityForBus(id)
+  }
   getDb().buses.push(bus)
   syncBusStopLinks(bus)
   refreshClients('bus-created')
