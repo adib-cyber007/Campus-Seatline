@@ -2,6 +2,7 @@ import { generateText, Output } from 'ai'
 import { z } from 'zod'
 import { getDb, busById, stopById, todayKey, userById } from '../db.js'
 import { auditSnapshot } from './audit.js'
+import { enrichedUnmetDemandEvents } from './unmetDemand.js'
 
 const DEFAULT_MODEL = 'openai/gpt-5.4-mini'
 const WRITE_VERBS = '(?:create|add|delete|remove|edit|update|change|set|assign|reassign|revoke|grant|modify|write|adjust)'
@@ -14,6 +15,57 @@ const answerSchema = z.object({
   answer: z.string().max(8000).describe('A concise grounded answer, or a clear explanation of what data is missing.')
 })
 
+function localUnmetDemandAnswer(question) {
+  const clean = String(question || '').toLowerCase()
+  const isDemandQuestion = /unmet demand|insufficient seats?|unable to (?:get|find|board)|could not (?:get|find|board)|couldn't (?:get|find|board)|stranded|no alternate/.test(clean)
+  if (!isDemandQuestion) return null
+
+  const now = new Date()
+  let periodLabel = 'in the recorded history'
+  let since = null
+  if (/\btoday\b/.test(clean)) {
+    periodLabel = 'today'
+    since = todayKey()
+  } else if (/\b(?:this|past|last) week\b/.test(clean)) {
+    periodLabel = 'in the last 7 days'
+    since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  }
+
+  const events = enrichedUnmetDemandEvents().filter(event =>
+    !since || (since.length === 10 ? event.tripDate === since : String(event.timestamp) >= since)
+  )
+  if (events.length === 0) {
+    return {
+      answer: `No insufficient-seat events were recorded ${periodLabel}.`,
+      refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
+    }
+  }
+
+  const byStop = new Map()
+  for (const event of events) {
+    const item = byStop.get(event.stopId) || { stopName: event.stopName, count: 0, stranded: 0 }
+    item.count += 1
+    if (!event.hadAlternateBus) item.stranded += 1
+    byStop.set(event.stopId, item)
+  }
+  const stops = [...byStop.values()].sort((a, b) => b.count - a.count || b.stranded - a.stranded || a.stopName.localeCompare(b.stopName))
+  if (/which stop|most|highest|top/.test(clean)) {
+    const top = stops[0]
+    return {
+      answer: `${top.stopName} had the most unmet demand ${periodLabel}: ${top.count} rejected report${top.count === 1 ? '' : 's'}, including ${top.stranded} stranded rider${top.stranded === 1 ? '' : 's'}.`,
+      refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
+    }
+  }
+
+  const stranded = events.filter(event => !event.hadAlternateBus).length
+  const lines = stops.slice(0, 8).map(item =>
+    `- ${item.stopName}: ${item.count} event${item.count === 1 ? '' : 's'} · ${item.stranded} stranded`
+  )
+  return {
+    answer: `${events.length} insufficient-seat event${events.length === 1 ? ' was' : 's were'} recorded ${periodLabel}; ${stranded} left the rider without an alternate bus.\n${lines.join('\n')}`,
+    refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
+  }
+}
 export function isWriteRequest(question) {
   return WRITE_REQUEST.test(String(question || ''))
 }
@@ -22,7 +74,7 @@ export function adminReadSnapshot() {
   const db = getDb()
   const tripDate = todayKey()
   const activeAssignments = db.inchargeAssignments.filter(item => !item.revokedAt)
-  const occupancy = db.buses.map(bus => {
+  const occupancy = db.buses.filter(bus => bus.active !== false).map(bus => {
     const reports = db.boardingReports.filter(item => item.busId === bus.id && item.tripDate === tripDate)
     const baseOccupied = reports.filter(item => item.state === 'seats_occupied').length
     const softHolds = reports.filter(item => item.state === 'soft_hold').length
@@ -40,23 +92,23 @@ export function adminReadSnapshot() {
   const value = {
     tripDate,
     generatedAt: new Date().toISOString(),
-    stops: db.stops.map(stop => ({
+    stops: db.stops.filter(stop => stop.active !== false).map(stop => ({
       id: stop.id,
       name: stop.name,
       timeline: stop.timeline,
-      buses: stop.busIds.map(busId => busById(busId)?.name || busId),
+      buses: stop.busIds.filter(busId => busById(busId)).map(busId => busById(busId).name),
       inchargeAssignments: activeAssignments
         .filter(item => (item.scopeType === 'stop' && item.stopId === stop.id) ||
           (item.scopeType === 'bus' && stop.busIds.includes(item.busId)))
         .map(item => userById(item.riderId)?.name || item.riderId)
     })),
-    buses: db.buses.map(bus => {
+    buses: db.buses.filter(bus => bus.active !== false).map(bus => {
       const counts = occupancy.find(item => item.busId === bus.id)
       return {
         id: bus.id,
         name: bus.name,
         capacity: bus.capacity,
-        stops: bus.stopIds.map(stopId => stopById(stopId)?.name || stopId),
+        stops: bus.stopIds.filter(stopId => stopById(stopId)).map(stopId => stopById(stopId).name),
         seatsOccupied: counts?.seatsOccupied || 0,
         seatsAvailable: counts?.availableSeats || 0,
         softHolds: counts?.softHolds || 0,
@@ -92,7 +144,7 @@ export function adminReadSnapshot() {
 export async function answerAdminQuestion(question, { generator = generateText, model } = {}) {
   const cleanQuestion = String(question || '').trim()
   if (!cleanQuestion) {
-    const error = new Error('Enter a question about stops, buses, occupancy, Incharge assignments, or the audit log.')
+    const error = new Error('Enter a question about stops, buses, occupancy, Incharge assignments, unmet demand, or the audit log.')
     error.status = 400
     throw error
   }
@@ -108,6 +160,8 @@ export async function answerAdminQuestion(question, { generator = generateText, 
       model: null
     }
   }
+  const localDemandAnswer = localUnmetDemandAnswer(cleanQuestion)
+  if (localDemandAnswer) return localDemandAnswer
   if (generator === generateText && !process.env.AI_GATEWAY_API_KEY) {
     const error = new Error('The Admin AI assistant is not configured yet. Set AI_GATEWAY_API_KEY on the server and try again.')
     error.status = 503

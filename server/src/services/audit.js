@@ -1,4 +1,6 @@
-import { getDb, userById, busById, stopById } from '../db.js'
+import {
+  getDb, userById, busByIdIncludingArchived, stopByIdIncludingArchived
+} from '../db.js'
 
 function tripLabel(tripDate) {
   return tripDate ? ` · trip ${tripDate}` : ''
@@ -16,8 +18,8 @@ export function auditSnapshot() {
       actor: userById(a.userId)?.name || a.userId,
       outcome: a.outcome,
       detail: `${a.channel} "${String(a.requested).toUpperCase()}" → ${a.outcome}` +
-        ` · Bus ${busById(a.busId)?.name || a.busId}` +
-        (a.stopId ? ` · Stop ${stopById(a.stopId)?.name || a.stopId}` : '') +
+        ` · Bus ${busByIdIncludingArchived(a.busId)?.name || a.busId}` +
+        (a.stopId ? ` · Stop ${stopByIdIncludingArchived(a.stopId)?.name || a.stopId}` : '') +
         tripLabel(a.tripDate) +
         (a.message ? ` — ${a.message}` : '')
     })
@@ -29,7 +31,7 @@ export function auditSnapshot() {
       kind: 'arrival_event',
       timestamp: e.timestamp,
       actor: e.confirmedByUserIds.map(id => userById(id)?.name || id).join(', ') || 'unknown',
-      detail: `Bus ${busById(e.busId)?.name || e.busId} confirmed at Stop ${stopById(e.stopId)?.name || e.stopId}` +
+      detail: `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} confirmed at Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
         ` (${e.confirmedByUserIds.length} confirmation${e.confirmedByUserIds.length === 1 ? '' : 's'})` +
         tripLabel(e.tripDate)
     })
@@ -41,7 +43,7 @@ export function auditSnapshot() {
       kind: 'incharge_override',
       timestamp: o.timestamp,
       actor: userById(o.inchargeId)?.name || o.inchargeId,
-      detail: `Bus ${busById(o.busId)?.name || o.busId}: Seats Available ${o.previousAvailable} → ${o.newAvailable}` +
+      detail: `Bus ${busByIdIncludingArchived(o.busId)?.name || o.busId}: Seats Available ${o.previousAvailable} → ${o.newAvailable}` +
         ` (Seats Occupied derived ${o.previousOccupied} → ${o.newOccupied})` +
         tripLabel(o.tripDate)
     })
@@ -49,8 +51,8 @@ export function auditSnapshot() {
 
   for (const g of db.inchargeAssignments) {
     const scope = g.scopeType === 'bus'
-      ? `Bus ${busById(g.busId)?.name || g.busId}`
-      : `Stop ${stopById(g.stopId)?.name || g.stopId}`
+      ? `Bus ${busByIdIncludingArchived(g.busId)?.name || g.busId}`
+      : `Stop ${stopByIdIncludingArchived(g.stopId)?.name || g.stopId}`
     items.push({
       id: `${g.id}-grant`,
       kind: 'incharge_assignment',
@@ -69,5 +71,30 @@ export function auditSnapshot() {
     }
   }
 
+  for (const event of db.unmetDemandEvents) {
+    items.push({
+      id: event.id,
+      kind: 'unmet_demand',
+      timestamp: event.timestamp,
+      actor: userById(event.userId)?.name || event.userId,
+      outcome: event.hadAlternateBus ? 'had_alternative' : 'stranded',
+      detail: `Could not get a seat on Bus ${busByIdIncludingArchived(event.busId)?.name || event.busId}` +
+        ` at Stop ${stopByIdIncludingArchived(event.stopId)?.name || event.stopId}` +
+        (event.hadAlternateBus ? ' · alternate bus available' : ' · no alternate bus available') +
+        tripLabel(event.tripDate)
+    })
+  }
+
+  for (const entity of [...db.buses, ...db.stops].filter(item => item.active === false && item.archivedAt)) {
+    const isBus = Object.prototype.hasOwnProperty.call(entity, 'capacity')
+    items.push({
+      id: `${entity.id}-archived`,
+      kind: 'entity_archived',
+      timestamp: entity.archivedAt,
+      actor: userById(entity.archivedByAdminId)?.name || entity.archivedByAdminId || 'unknown admin',
+      outcome: 'archived',
+      detail: `Archived ${isBus ? 'Bus' : 'Stop'} ${entity.name}; historical records remain available`
+    })
+  }
   return items.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
 }

@@ -58,5 +58,26 @@ export function deriveAuditRecords(state) {
       })
     }
   }
+  for (const item of state.unmetDemandEvents) {
+    records.push({
+      id: item.id, kind: 'unmet_demand', actorUserId: item.userId,
+      busId: item.busId, stopId: item.stopId, tripDate: item.tripDate,
+      outcome: item.hadAlternateBus ? 'had_alternative' : 'stranded',
+      detail: `${userName(item.userId)} could not get a seat on Bus ${busName(item.busId)} at Stop ${stopName(item.stopId)}` +
+        (item.hadAlternateBus ? ' · alternate bus available' : ' · no alternate bus available'),
+      metadata: { channel: item.channel, alternateBusIds: item.alternateBusIds },
+      timestamp: item.timestamp
+    })
+  }
+
+  for (const item of [...state.buses, ...state.stops].filter(entity => entity.active === false && entity.archivedAt)) {
+    const isBus = Object.prototype.hasOwnProperty.call(item, 'capacity')
+    records.push({
+      id: `${item.id}-archived`, kind: 'entity_archived', actorUserId: item.archivedByAdminId || null,
+      busId: isBus ? item.id : null, stopId: isBus ? null : item.id, tripDate: null,
+      outcome: 'archived', detail: `Archived ${isBus ? 'Bus' : 'Stop'} ${item.name}`,
+      metadata: { entityType: isBus ? 'bus' : 'stop' }, timestamp: item.archivedAt
+    })
+  }
   return records
 }

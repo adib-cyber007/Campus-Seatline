@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 
 const STOP_PAGE_SIZE = 8
+const localDateKey = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
 
 function SectionHeading({ eyebrow, title, description, action }) {
   return (
@@ -227,6 +231,9 @@ function StopsTab({ data, reload, toast }) {
                 <div className="stoprow-main">
                   <span className="stop-index" aria-hidden="true">{String(safePage * STOP_PAGE_SIZE + pageRows.indexOf(s) + 1).padStart(2, '0')}</span>
                   <span><strong>{s.name}</strong><small>{s.timeline.length ? s.timeline.map(t => t.time).join(' · ') : 'No expected arrivals'} · {s.busIds.length ? `${s.busIds.length} linked bus${s.busIds.length === 1 ? '' : 'es'}` : 'No linked buses'}</small></span>
+                  <span className="rider-count" aria-label={`${s.riderCount} riders counted at ${s.name}`}>
+                    <strong>{s.riderCount}</strong> rider{s.riderCount === 1 ? '' : 's'}
+                  </span>
                   {coveredByIncharge.get(s.id)
                     ? <span className="status-label covered"><span aria-hidden="true">✓</span> Covered</span>
                     : <span className="status-label attention"><span aria-hidden="true">!</span> Needs Incharge</span>}
@@ -293,6 +300,16 @@ function EditStop({ stop, buses, riders, assignments, reload, done, toast }) {
     } catch (e) { toast(e.message, 'error') }
     finally { setBusy('') }
   }
+  const remove = async () => {
+    if (busy || !window.confirm(`Remove ${stop.name} from the active network? Historical reports and audit records will be preserved.`)) return
+    setBusy('remove')
+    try {
+      await api(`/admin/stops/${stop.id}`, { method: 'DELETE' })
+      toast('Stop removed from the active network; history preserved', 'feedback')
+      done()
+    } catch (e) { toast(e.message, 'error') }
+    finally { setBusy('') }
+  }
 
   return (
     <section className="card wide editing admin-section">
@@ -332,9 +349,10 @@ function EditStop({ stop, buses, riders, assignments, reload, done, toast }) {
           <button className="btn secondary" disabled={!grantRider || Boolean(busy)} onClick={grant}>{busy === 'grant' ? <><span className="spinner dark" /> Granting</> : 'Grant authority'}</button>
         </div>
       </div>
-      <div className="row">
+      <div className="row edit-actions">
         <button className="btn primary" disabled={Boolean(busy)} onClick={save}>{busy === 'save' ? <><span className="spinner" /> Saving</> : 'Save changes'}</button>
         <button className="btn secondary" disabled={Boolean(busy)} onClick={done}>Cancel</button>
+        <button className="btn danger-quiet remove-entity" disabled={Boolean(busy)} onClick={remove}>{busy === 'remove' ? 'Removing…' : 'Remove stop'}</button>
       </div>
     </section>
   )
@@ -418,11 +436,11 @@ function EditBus({ bus, data, done, toast }) {
   const [name, setName] = useState(bus.name)
   const [capacity, setCapacity] = useState(bus.capacity)
   const [stopIds, setStopIds] = useState(bus.stopIds)
-  const [busy, setBusy] = useState(false)
+  const [busy, setBusy] = useState('')
 
   const save = async () => {
     if (busy) return
-    setBusy(true)
+    setBusy('save')
     try {
       await api(`/admin/buses/${bus.id}`, {
         method: 'PUT',
@@ -430,9 +448,19 @@ function EditBus({ bus, data, done, toast }) {
       })
       toast('Bus saved', 'feedback'); done()
     } catch (e) { toast(e.message, 'error') }
-    finally { setBusy(false) }
+    finally { setBusy('') }
   }
 
+  const remove = async () => {
+    if (busy || !window.confirm(`Remove ${bus.name} from the active network? Historical reports and audit records will be preserved.`)) return
+    setBusy('remove')
+    try {
+      await api(`/admin/buses/${bus.id}`, { method: 'DELETE' })
+      toast('Bus removed from the active network; history preserved', 'feedback')
+      done()
+    } catch (e) { toast(e.message, 'error') }
+    finally { setBusy('') }
+  }
   return (
     <section className="card wide editing admin-section">
       <SectionHeading eyebrow="Editing bus" title={bus.name} description="Capacity cannot be reduced below seats that are currently occupied or held." />
@@ -443,9 +471,10 @@ function EditBus({ bus, data, done, toast }) {
       <BeaconPassport beacon={bus.beacon} />
       <OrderedStopPicker all={data.stops} value={stopIds} onChange={setStopIds} />
       <p className="field-help">Incharge authority is managed separately in the Incharge section.</p>
-      <div className="row">
-        <button className="btn primary" disabled={busy} onClick={save}>{busy ? <><span className="spinner" /> Saving</> : 'Save changes'}</button>
-        <button className="btn secondary" disabled={busy} onClick={done}>Cancel</button>
+      <div className="row edit-actions">
+        <button className="btn primary" disabled={Boolean(busy)} onClick={save}>{busy === 'save' ? <><span className="spinner" /> Saving</> : 'Save changes'}</button>
+        <button className="btn secondary" disabled={Boolean(busy)} onClick={done}>Cancel</button>
+        <button className="btn danger-quiet remove-entity" disabled={Boolean(busy)} onClick={remove}>{busy === 'remove' ? 'Removing…' : 'Remove bus'}</button>
       </div>
     </section>
   )
@@ -572,6 +601,131 @@ function UsersTab({ data }) {
   )
 }
 
+function UnmetDemandTab({ data }) {
+  const today = localDateKey()
+  const [dateFrom, setDateFrom] = useState(today)
+  const [dateTo, setDateTo] = useState(today)
+  const [stopId, setStopId] = useState('all')
+  const [busId, setBusId] = useState('all')
+  const [status, setStatus] = useState('all')
+  const [sort, setSort] = useState('stranded')
+  const events = data.unmetDemand?.events || []
+  const stopOptions = useMemo(() => {
+    const options = new Map(data.stops.map(stop => [stop.id, stop.name]))
+    for (const event of events) options.set(event.stopId, event.stopName)
+    return [...options].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [data.stops, events])
+  const busOptions = useMemo(() => {
+    const options = new Map(data.buses.map(bus => [bus.id, bus.name]))
+    for (const event of events) options.set(event.busId, event.busName)
+    return [...options].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [data.buses, events])
+
+  const filteredEvents = useMemo(() => events.filter(event => {
+    if (dateFrom && event.tripDate < dateFrom) return false
+    if (dateTo && event.tripDate > dateTo) return false
+    if (stopId !== 'all' && event.stopId !== stopId) return false
+    if (busId !== 'all' && event.busId !== busId) return false
+    if (status === 'stranded' && event.hadAlternateBus) return false
+    if (status === 'alternative' && !event.hadAlternateBus) return false
+    return true
+  }), [events, dateFrom, dateTo, stopId, busId, status])
+
+  const groups = useMemo(() => {
+    const grouped = new Map()
+    for (const event of filteredEvents) {
+      const key = `${event.stopId}:${event.busId}`
+      const group = grouped.get(key) || {
+        key, stopId: event.stopId, stopName: event.stopName,
+        busId: event.busId, busName: event.busName, events: [],
+        strandedCount: 0, alternativeCount: 0, latestAt: event.timestamp
+      }
+      group.events.push(event)
+      if (event.hadAlternateBus) group.alternativeCount += 1
+      else group.strandedCount += 1
+      if (String(event.timestamp) > String(group.latestAt)) group.latestAt = event.timestamp
+      grouped.set(key, group)
+    }
+    const rows = [...grouped.values()]
+    for (const group of rows) group.events.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+    rows.sort((a, b) => {
+      if (sort === 'latest') return String(b.latestAt).localeCompare(String(a.latestAt))
+      if (sort === 'volume') return b.events.length - a.events.length || b.strandedCount - a.strandedCount
+      return b.strandedCount - a.strandedCount || b.events.length - a.events.length || String(b.latestAt).localeCompare(String(a.latestAt))
+    })
+    return rows
+  }, [filteredEvents, sort])
+
+  const strandedTotal = filteredEvents.filter(event => !event.hadAlternateBus).length
+  return (
+    <section className="card wide admin-section list-section unmet-demand" aria-label="Unmet demand">
+      <SectionHeading
+        eyebrow="Capacity exceptions"
+        title="Where seats ran out"
+        description="Review capacity rejections by stop and bus. Stranded riders had no other viable bus with a seat at that moment."
+        action={<span className={`status-label ${strandedTotal ? 'stranded' : 'covered'}`}><span aria-hidden="true">{strandedTotal ? '!' : '✓'}</span>{strandedTotal} stranded</span>}
+      />
+      <div className="controls filter-bar demand-filter-bar">
+        <label className="dated-filter"><span>From</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={event => setDateFrom(event.target.value)} /></label>
+        <label className="dated-filter"><span>To</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={event => setDateTo(event.target.value)} /></label>
+        <label><span className="sr-only">Filter unmet demand by stop</span><select value={stopId} onChange={event => setStopId(event.target.value)}>
+          <option value="all">Stop: all</option>
+          {stopOptions.map(stop => <option key={stop.id} value={stop.id}>{stop.name}</option>)}
+        </select></label>
+        <label><span className="sr-only">Filter unmet demand by bus</span><select value={busId} onChange={event => setBusId(event.target.value)}>
+          <option value="all">Bus: all</option>
+          {busOptions.map(bus => <option key={bus.id} value={bus.id}>{bus.name}</option>)}
+        </select></label>
+        <label><span className="sr-only">Filter by alternate-bus status</span><select value={status} onChange={event => setStatus(event.target.value)}>
+          <option value="all">Status: all</option>
+          <option value="stranded">Stranded only</option>
+          <option value="alternative">Had an alternative</option>
+        </select></label>
+        <label><span className="sr-only">Sort unmet demand</span><select value={sort} onChange={event => setSort(event.target.value)}>
+          <option value="stranded">Urgent first</option>
+          <option value="volume">Highest volume</option>
+          <option value="latest">Most recent</option>
+        </select></label>
+      </div>
+      <p className="result-count" aria-live="polite"><strong>{filteredEvents.length}</strong> rejected report{filteredEvents.length === 1 ? '' : 's'} across <strong>{groups.length}</strong> stop–bus group{groups.length === 1 ? '' : 's'}</p>
+      <div className="demand-list">
+        {groups.map(group => (
+          <details key={group.key} className={`demand-group ${group.strandedCount ? 'has-stranded' : 'has-alternative'}`}>
+            <summary>
+              <span className="demand-route">
+                <span className="demand-signal" aria-hidden="true">{group.strandedCount ? '!' : '↗'}</span>
+                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>Latest {new Date(group.latestAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small></span>
+              </span>
+              <span className="demand-metrics">
+                <span><strong>{group.events.length}</strong><small>unable to board</small></span>
+                <span><strong>{group.strandedCount}</strong><small>stranded</small></span>
+                <span className={`status-label ${group.strandedCount ? 'stranded' : 'info'}`}>{group.strandedCount ? 'No alternate' : 'Alternative available'}</span>
+                <span className="disclosure-plus" aria-hidden="true">+</span>
+              </span>
+            </summary>
+            <div className="table-wrap demand-detail"><table>
+              <thead><tr><th>Rider</th><th>Time</th><th>Report</th><th>Outcome context</th></tr></thead>
+              <tbody>
+                {group.events.map(event => (
+                  <tr key={event.id}>
+                    <td><strong>{event.riderName}</strong><small>{event.riderEmail}</small></td>
+                    <td className="subtle audit-time">{new Date(event.timestamp).toLocaleString()}</td>
+                    <td>{event.channel === 'ble_confirmed' ? 'BLE confirmed' : 'Soft Hold'}</td>
+                    <td>{event.hadAlternateBus
+                      ? <span className="status-label info">Other option · {event.alternateBusNames.join(', ')}</span>
+                      : <span className="status-label stranded"><span aria-hidden="true">!</span>Stranded</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table></div>
+          </details>
+        ))}
+        {groups.length === 0 && <div className="empty-inline demand-empty"><span aria-hidden="true">✓</span><p>No insufficient-seat events match these filters.</p></div>}
+      </div>
+    </section>
+  )
+}
 function AuditTab({ data, auditFeed }) {
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState('all')
@@ -590,7 +744,7 @@ function AuditTab({ data, auditFeed }) {
 
   return (
     <section className="card wide admin-section list-section">
-      <SectionHeading eyebrow="Immutable activity" title="Audit trail" description="Every report attempt—including rejected duplicates—plus arrivals, availability corrections, grants, and revocations." />
+      <SectionHeading eyebrow="Immutable activity" title="Audit trail" description="Every report attempt—including rejected duplicates—plus unmet demand, archived network records, arrivals, availability corrections, grants, and revocations." />
       <div className="controls filter-bar">
         <label className="search-field"><span className="sr-only">Search audit trail</span><span className="search-icon" aria-hidden="true">⌕</span><input type="search" placeholder="Search actor or detail…" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <label><span className="sr-only">Audit event type</span><select value={kind} onChange={event => setKind(event.target.value)}><option value="all">All event types</option>{kinds.map(item => <option key={item} value={item}>{item.replace(/_/g, ' ')}</option>)}</select></label>
@@ -619,7 +773,8 @@ const assistantExamples = [
   'Which stops have no Incharge assigned?',
   'Show buses currently above 90% occupancy',
   'How many Soft Hold releases happened today?',
-  'List Incharge assignments changed this week.'
+  'List Incharge assignments changed this week.',
+  'Which stop had the most unmet demand this week?'
 ]
 
 function AssistantTab() {
@@ -651,7 +806,7 @@ function AssistantTab() {
       <SectionHeading
         eyebrow="Read-only insight"
         title="Ask Campus Seatline"
-        description="Ask about current stops, buses, seat counts, Incharge assignments, or audit activity. This assistant has no write tools and cannot change transport data."
+        description="Ask about current stops, buses, seat counts, Incharge assignments, unmet demand, or audit activity. Demand questions run through a local read-only query layer; no write tools can change transport data."
         action={<span className="status-label info"><span aria-hidden="true">◇</span> Admin only</span>}
       />
       <form className="assistant-form" onSubmit={ask}>
@@ -689,7 +844,7 @@ function AssistantTab() {
 
 const adminTabs = [
   ['overview', 'Overview'], ['stops', 'Stops'], ['buses', 'Buses'],
-  ['incharge', 'Incharge'], ['users', 'Users'], ['audit', 'Audit log'], ['assistant', 'AI assistant']
+  ['incharge', 'Incharge'], ['users', 'Users'], ['unmet', 'Unmet demand'], ['audit', 'Audit log'], ['assistant', 'AI assistant']
 ]
 
 export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, connectionStatus }) {
@@ -742,6 +897,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         {tab === 'buses' && <BusesTab data={data} reload={load} toast={toast} />}
         {tab === 'incharge' && <AssignmentsTab data={data} reload={load} toast={toast} />}
         {tab === 'users' && <UsersTab data={data} />}
+        {tab === 'unmet' && <UnmetDemandTab data={data} />}
         {tab === 'audit' && <AuditTab data={data} auditFeed={auditFeed} />}
         {tab === 'assistant' && <AssistantTab />}
       </div>

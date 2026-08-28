@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   getDb, busById, stopById, busesForStops, sanitizeUser, riderAuthorityBusIds, activeAssignments,
   effectiveStopIdsForUser, dailyStopOverrideForUser, setDailyStopOverride, clearDailyStopOverride,
-  pushNotification, upsertDeviceToken, deactivateDeviceToken
+  pushNotification, upsertDeviceToken, deactivateDeviceToken, activeStops
 } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import {
@@ -80,7 +80,7 @@ router.get('/overview', (req, res) => {
     user: sanitizeUser(user),
     stops: effectiveStopIds.map(id => stopById(id)).filter(Boolean),
     defaultStops: user.stopIds.map(id => stopById(id)).filter(Boolean),
-    availableStops: db.stops,
+    availableStops: activeStops(),
     dailyStopOverride: dailyStopOverrideForUser(user.id),
     buses,
     prompts: promptsForUser(user.id),

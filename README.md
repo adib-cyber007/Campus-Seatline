@@ -25,7 +25,8 @@ Open http://localhost:5173
 The optional Admin AI assistant uses Vercel AI Gateway from the server only. Set
 `AI_GATEWAY_API_KEY` before starting the server; `ADMIN_AI_MODEL` can override the default
 `openai/gpt-5.4-mini` model. If the key is absent or the provider fails, the Admin UI shows a
-clear unavailable message and does not fabricate an answer.
+clear unavailable message and does not fabricate an answer. Unmet-demand questions are resolved
+locally from aggregated database events, so the new operational demand data is not sent to the external model.
 
 ## Android APK
 
@@ -60,7 +61,7 @@ A one-time scan runs for 30 seconds in the foreground. **Enable closed-app alert
 Verify the backend core loop any time with:
 
 ```bash
-npm run smoke     # 121 end-to-end assertions, no server needed (spins its own instance)
+npm run smoke     # 139 end-to-end assertions, no server needed (spins its own instance)
 npm --prefix server run verify:postgres  # real process restart + DB constraint proof
 ```
 
@@ -84,7 +85,9 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 
 1. **Admin** (`admin@campus.edu`): see live occupancy table; create/edit stops with timelines,
    link buses to stops, set capacity, grant/revoke Incharge authority (Incharge tab, or inline
-   in a stop's editor); the Stops tab has search/sort/filters/pagination for large stop lists.
+   in a stop's editor); the Stops tab shows a live derived rider count and has
+   search/sort/filters/pagination. Safe Bus/Stop removal archives inactive entities while
+   preserving history; active dependencies produce a clear blocking message.
 2. **Rider** (`rider@campus.edu`, open in one browser profile): sees both buses auto-resolved
    from their stop. Answer **Yes** to *"Will you be boarding Shuttle-01 today?"* → Soft Holds +1,
    Available −1 — visible **live** (Socket.IO) in every other session, no refresh.
@@ -102,13 +105,15 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
    "Incharge controls" section on their authorized bus(es). They edit **Seats Available**;
    `Seats Occupied = capacity − seats_available − soft_holds` is back-calculated, broadcast
    live to everyone, and audit-logged with old/new values.
-7. **Admin → Audit**: complete trail of report attempts (including rejected duplicates),
-   arrival events, availability corrections, and authority grants/revocations.
+7. **Admin → Unmet demand**: capacity rejections are grouped by stop and bus, with stranded
+   riders highlighted and raw rider/time detail available on expansion. **Admin → Audit** keeps the
+   complete immutable trail, including archived network records.
 8. A rider can move a Soft Hold to another bus, or BLE-confirm a different bus to atomically
    release the old hold and board the detected bus. Riders with one bus option are held once
    automatically and can release with one tap.
 9. **Admin → AI assistant**: ask a read-only question about stops, buses, occupancy,
-   assignments, or audit activity. The module has no write tools or mutation routes.
+   assignments, audit activity, or unmet demand. Demand questions use the local read-only query
+   layer; the module has no write tools or mutation routes.
 
 ## What's real vs mocked
 
@@ -142,7 +147,8 @@ client (React + Vite)                server (Express + Socket.IO)
 │   controls, day-stop override)     │   │                     derived counts + corrections
 └─ AdminPage   (stops w/ search/     │   ├─ audit.js        ← attempts/events/corrections/
      sort/filter/pager, buses,        │   │                     authority grants
-     assignments, users/audit/AI)    │   └─ adminAssistant.js ← read-only LLM boundary
+     assignments, unmet demand,      │   ├─ unmetDemand.js  ← capacity rejection log/aggregation
+     users/audit/AI)                  │   └─ adminAssistant.js ← read-only query boundary
                                      ├─ db.js + database/ (PostgreSQL transaction boundary,
                                      │                     schema + normalized persistence)
      ▲ Socket.IO rooms per user      └─ index.js (HTTP + WS bootstrap)
@@ -157,6 +163,14 @@ Key domain rules implemented in `services/occupancy.js`:
   `seats_occupied(bus_id)`. A bus switch releases the former Soft Hold and applies the new
   state synchronously before any realtime broadcast. Released records remain inactive history;
   every attempt is separately logged to the immutable `reportAttempts` audit trail.
+- Stop rider totals are derived live from rider registrations plus active stop-scoped Incharge
+  assignments, using a unique rider set so a registered Incharge is counted once.
+- Bus and Stop removal uses **soft deletion**. Active rider/report/prompt/authority dependencies
+  block the action; safe archives disappear from active views while relational history and audit
+  names remain intact.
+- Capacity-rejected Soft Hold and direct BLE reports create immutable unmet-demand events with
+  their stop, bus, channel, and whether another viable bus had a seat. Admins see aggregated
+  groups with drill-down detail; unmet-demand assistant questions are answered locally.
 - Live counts are **derived**, not accumulated: `seats_occupied = confirmed_states + manual_
   adjustment` and `available = capacity − occupied − soft_holds`.
 - Soft hold "Yes" sets state `soft_hold` (idempotent); "No" logs the attempt and changes nothing.
@@ -190,7 +204,7 @@ Key domain rules implemented in `services/occupancy.js`:
 - Rider with Incharge authority (permission-gated):
   `POST /api/rider/incharge/buses/:busId/available` (edit Seats Available) ·
   `GET /api/rider/incharge/assignments`
-- Admin: `GET /api/admin/overview` · `POST/PUT /api/admin/stops[/:id]` · `POST/PUT /api/admin/buses[/:id]` ·
+- Admin: `GET /api/admin/overview` · `POST/PUT/DELETE /api/admin/stops[/:id]` · `POST/PUT/DELETE /api/admin/buses[/:id]` ·
   `POST /api/admin/incharge-assignments` · `DELETE /api/admin/incharge-assignments/:id` (revoke) ·
   `POST /api/admin/assistant/query` (strictly read-only)
 

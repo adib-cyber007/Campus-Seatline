@@ -1,0 +1,59 @@
+import { getDb, nextId, busByIdIncludingArchived, stopByIdIncludingArchived, userById, todayKey } from '../db.js'
+import { emitAdmins } from '../realtime.js'
+
+export function recordUnmetDemand({ userId, stopId, busId, channel, alternateBusIds = [] }) {
+  const event = {
+    id: nextId(),
+    userId,
+    stopId,
+    busId,
+    channel,
+    tripDate: todayKey(),
+    hadAlternateBus: alternateBusIds.length > 0,
+    alternateBusIds: [...new Set(alternateBusIds)],
+    timestamp: new Date().toISOString()
+  }
+  getDb().unmetDemandEvents.push(event)
+  emitAdmins('refresh', { reason: 'unmet-demand-recorded' })
+  return event
+}
+
+export function enrichedUnmetDemandEvents() {
+  return getDb().unmetDemandEvents
+    .map(event => ({
+      ...event,
+      riderName: userById(event.userId)?.name || event.userId,
+      riderEmail: userById(event.userId)?.email || null,
+      stopName: stopByIdIncludingArchived(event.stopId)?.name || event.stopId,
+      busName: busByIdIncludingArchived(event.busId)?.name || event.busId,
+      alternateBusNames: event.alternateBusIds
+        .map(id => busByIdIncludingArchived(id)?.name || id)
+    }))
+    .sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
+}
+
+export function aggregateUnmetDemand(events = enrichedUnmetDemandEvents()) {
+  const groups = new Map()
+  for (const event of events) {
+    const key = `${event.stopId}:${event.busId}`
+    const group = groups.get(key) || {
+      key,
+      stopId: event.stopId,
+      stopName: event.stopName,
+      busId: event.busId,
+      busName: event.busName,
+      count: 0,
+      strandedCount: 0,
+      hadAlternativeCount: 0,
+      latestAt: event.timestamp
+    }
+    group.count += 1
+    if (event.hadAlternateBus) group.hadAlternativeCount += 1
+    else group.strandedCount += 1
+    if (String(event.timestamp) > String(group.latestAt)) group.latestAt = event.timestamp
+    groups.set(key, group)
+  }
+  return [...groups.values()].sort((a, b) =>
+    b.strandedCount - a.strandedCount || b.count - a.count || a.stopName.localeCompare(b.stopName)
+  )
+}

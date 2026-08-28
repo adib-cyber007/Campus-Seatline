@@ -68,10 +68,29 @@ export function sanitizeUser(u) {
 }
 
 export const userById = id => db.users.find(u => u.id === id)
-export const busById = id => db.buses.find(b => b.id === id)
-export const stopById = id => db.stops.find(s => s.id === id)
-export const busesForStops = stopIds =>
-  db.buses.filter(b => b.stopIds.some(s => stopIds.includes(s)))
+export const busByIdIncludingArchived = id => db.buses.find(b => b.id === id)
+export const stopByIdIncludingArchived = id => db.stops.find(s => s.id === id)
+export const busById = id => db.buses.find(b => b.id === id && b.active !== false)
+export const stopById = id => db.stops.find(s => s.id === id && s.active !== false)
+export const activeBuses = () => db.buses.filter(b => b.active !== false)
+export const activeStops = () => db.stops.filter(s => s.active !== false)
+export function riderCountForStop(stopId) {
+  const riderIds = new Set(
+    db.users
+      .filter(user => user.role === 'rider' && user.stopIds.includes(stopId))
+      .map(user => user.id)
+  )
+  for (const assignment of db.inchargeAssignments) {
+    if (!assignment.revokedAt && assignment.scopeType === 'stop' && assignment.stopId === stopId) {
+      riderIds.add(assignment.riderId)
+    }
+  }
+  return riderIds.size
+}
+export const busesForStops = stopIds => {
+  const activeStopIds = stopIds.filter(id => stopById(id))
+  return activeBuses().filter(b => b.stopIds.some(s => activeStopIds.includes(s)))
+}
 
 export function activeDeviceTokensForUser(userId) {
   return db.deviceTokens.filter(token => token.userId === userId && token.active)
@@ -264,11 +283,13 @@ export function clearDailyStopOverride(userId) {
 }
 
 export function activeAssignments() {
-  return db.inchargeAssignments.filter(a => !a.revokedAt)
+  return db.inchargeAssignments.filter(a =>
+    !a.revokedAt && (a.scopeType === 'bus' ? Boolean(busById(a.busId)) : Boolean(stopById(a.stopId)))
+  )
 }
 
 export function riderAuthorityBusIds(userId) {
-  return db.buses
+  return activeBuses()
     .filter(b =>
       activeAssignments().some(a =>
         a.riderId === userId &&

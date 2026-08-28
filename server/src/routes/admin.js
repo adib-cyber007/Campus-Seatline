@@ -1,11 +1,15 @@
 import { Router } from 'express'
-import { getDb, nextId, busById, stopById, sanitizeUser } from '../db.js'
+import {
+  getDb, nextId, busById, stopById, sanitizeUser, activeBuses, activeStops, todayKey,
+  busByIdIncludingArchived, stopByIdIncludingArchived, riderCountForStop
+} from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import { snapshot } from '../services/occupancy.js'
 import { auditSnapshot } from '../services/audit.js'
 import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
 import { beaconIdentityForBus } from '../beaconIdentity.js'
+import { enrichedUnmetDemandEvents, aggregateUnmetDemand } from '../services/unmetDemand.js'
 
 const router = Router()
 router.use(authenticate, requireRole('admin'))
@@ -15,7 +19,7 @@ function syncStopBusLink(stopId, wantedBusIds) {
   const stop = stopById(stopId)
   if (!stop) return
   const wantedIds = [...new Set(wantedBusIds)]
-  for (const bus of db.buses) {
+  for (const bus of activeBuses()) {
     const linked = bus.stopIds.includes(stopId)
     const wanted = wantedIds.includes(bus.id)
     if (wanted && !linked) {
@@ -25,18 +29,18 @@ function syncStopBusLink(stopId, wantedBusIds) {
       bus.stopIds = bus.stopIds.filter(s => s !== stopId)
     }
   }
-  stop.busIds = db.buses.filter(bus => bus.stopIds.includes(stopId)).map(bus => bus.id)
+  stop.busIds = activeBuses().filter(bus => bus.stopIds.includes(stopId)).map(bus => bus.id)
 }
 
 function syncBusStopLinks(bus) {
   const db = getDb()
   bus.stopIds = [...new Set(bus.stopIds)]
-  for (const stop of db.stops) {
+  for (const stop of activeStops()) {
     const linked = stop.busIds.includes(bus.id)
     const wanted = bus.stopIds.includes(stop.id)
     if (wanted && !linked) stop.busIds.push(bus.id)
     if (!wanted && linked) stop.busIds = stop.busIds.filter(b => b !== bus.id)
-    stop.busIds = [...new Set(stop.busIds.filter(id => db.buses.some(candidate => candidate.id === id)))]
+    stop.busIds = [...new Set(stop.busIds.filter(id => Boolean(busById(id))))]
   }
 }
 
@@ -46,8 +50,8 @@ function enrichAssignment(a) {
     riderName: getDb().users.find(u => u.id === a.riderId)?.name || a.riderId,
     grantedByName: getDb().users.find(u => u.id === a.grantedByAdminId)?.name || a.grantedByAdminId,
     scopeName: a.scopeType === 'bus'
-      ? (busById(a.busId)?.name || a.busId)
-      : (stopById(a.stopId)?.name || a.stopId)
+      ? (busByIdIncludingArchived(a.busId)?.name || a.busId)
+      : (stopByIdIncludingArchived(a.stopId)?.name || a.stopId)
   }
 }
 
@@ -57,26 +61,36 @@ function refreshClients(reason) {
 
 router.get('/overview', (req, res) => {
   const db = getDb()
+  const stops = activeStops().map(stop => ({
+    ...stop,
+    busIds: stop.busIds.filter(id => Boolean(busById(id))),
+    riderCount: riderCountForStop(stop.id)
+  }))
+  const unmetDemandEvents = enrichedUnmetDemandEvents()
   res.json({
-    stops: db.stops,
-    buses: db.buses.map(b => ({
+    stops,
+    buses: activeBuses().map(b => ({
       ...b,
+      stopIds: b.stopIds.filter(id => Boolean(stopById(id))),
       occ: snapshot().find(s => s.busId === b.id),
       inchargeNames: db.inchargeAssignments
         .filter(a => !a.revokedAt && ((a.scopeType === 'bus' && a.busId === b.id) ||
-          (a.scopeType === 'stop' && b.stopIds.includes(a.stopId))))
+          (a.scopeType === 'stop' && b.stopIds.includes(a.stopId) && Boolean(stopById(a.stopId)))))
         .map(a => db.users.find(u => u.id === a.riderId)?.name || a.riderId)
     })),
     users: db.users.map(u => ({
       ...sanitizeUser(u),
-      stopNames: u.stopIds.map(id => stopById(id)?.name || id)
+      stopNames: u.stopIds.map(id => stopByIdIncludingArchived(id)?.name || id)
     })),
     assignments: db.inchargeAssignments.map(enrichAssignment),
     occupancy: snapshot(),
+    unmetDemand: {
+      events: unmetDemandEvents,
+      summary: aggregateUnmetDemand(unmetDemandEvents)
+    },
     audit: auditSnapshot()
   })
 })
-
 router.post('/assistant/query', async (req, res) => {
   try {
     const result = await answerAdminQuestion(req.body?.question)
@@ -143,7 +157,7 @@ router.post('/stops', (req, res) => {
   const rows = Array.isArray(timeline)
     ? timeline.filter(r => r && r.time).map(r => ({ time: String(r.time), label: String(r.label || '') }))
     : []
-  const stop = { id: nextId(), name: String(name).trim(), timeline: rows, busIds: [] }
+  const stop = { id: nextId(), name: String(name).trim(), timeline: rows, busIds: [], active: true }
   getDb().stops.push(stop)
   syncStopBusLink(stop.id, ids)
   refreshClients('stop-created')
@@ -181,7 +195,7 @@ router.post('/buses', (req, res) => {
 
   const id = nextId()
   const bus = {
-    id, name: String(name).trim(), capacity: cap, stopIds: ids,
+    id, name: String(name).trim(), capacity: cap, stopIds: ids, active: true,
     beacon: beaconIdentityForBus(id)
   }
   getDb().buses.push(bus)
@@ -219,6 +233,73 @@ router.put('/buses/:id', (req, res) => {
   }
   refreshClients('bus-updated')
   res.json({ bus })
+})
+
+function busArchiveDependencies(bus) {
+  const db = getDb()
+  const current = snapshot().find(item => item.busId === bus.id)
+  return {
+    activeRiders: (current?.softHolds || 0) + (current?.seatsOccupied || 0),
+    pendingPrompts: db.prompts.filter(item => item.busId === bus.id && item.status === 'pending').length,
+    activeAssignments: db.inchargeAssignments.filter(item =>
+      !item.revokedAt && item.scopeType === 'bus' && item.busId === bus.id
+    ).length
+  }
+}
+
+function stopArchiveDependencies(stop) {
+  const db = getDb()
+  const tripDate = todayKey()
+  return {
+    registeredRiders: db.users.filter(user => user.role === 'rider' && user.stopIds.includes(stop.id)).length,
+    activeReports: db.boardingReports.filter(item =>
+      item.stopId === stop.id && item.tripDate === tripDate && ['soft_hold', 'seats_occupied'].includes(item.state)
+    ).length,
+    pendingPrompts: db.prompts.filter(item => item.stopId === stop.id && item.status === 'pending').length,
+    dailyOverrides: db.dailyStopOverrides.filter(item => item.stopId === stop.id && item.tripDate === tripDate).length,
+    activeAssignments: db.inchargeAssignments.filter(item =>
+      !item.revokedAt && item.scopeType === 'stop' && item.stopId === stop.id
+    ).length
+  }
+}
+
+function dependencyTotal(dependencies) {
+  return Object.values(dependencies).reduce((sum, value) => sum + value, 0)
+}
+
+router.delete('/buses/:id', (req, res) => {
+  const bus = busById(req.params.id)
+  if (!bus) return res.status(404).json({ error: 'Active bus not found' })
+  const dependencies = busArchiveDependencies(bus)
+  if (dependencyTotal(dependencies) > 0) {
+    return res.status(409).json({
+      error: `Cannot remove ${bus.name}: ${dependencies.activeRiders} active riders/seats, ${dependencies.pendingPrompts} pending prompts, and ${dependencies.activeAssignments} active Incharge assignments must be resolved first.`,
+      dependencies
+    })
+  }
+  bus.active = false
+  bus.archivedAt = new Date().toISOString()
+  bus.archivedByAdminId = req.user.id
+  bus.beacon = { ...bus.beacon, active: false }
+  refreshClients('bus-archived')
+  res.json({ archived: true, bus })
+})
+
+router.delete('/stops/:id', (req, res) => {
+  const stop = stopById(req.params.id)
+  if (!stop) return res.status(404).json({ error: 'Active stop not found' })
+  const dependencies = stopArchiveDependencies(stop)
+  if (dependencyTotal(dependencies) > 0) {
+    return res.status(409).json({
+      error: `Cannot remove ${stop.name}: ${dependencies.registeredRiders} registered riders, ${dependencies.activeReports} active reports, ${dependencies.pendingPrompts} pending prompts, ${dependencies.dailyOverrides} daily overrides, and ${dependencies.activeAssignments} active Incharge assignments must be resolved first.`,
+      dependencies
+    })
+  }
+  stop.active = false
+  stop.archivedAt = new Date().toISOString()
+  stop.archivedByAdminId = req.user.id
+  refreshClients('stop-archived')
+  res.json({ archived: true, stop })
 })
 
 export default router

@@ -14,17 +14,29 @@ CREATE TABLE IF NOT EXISTS stops (
   id uuid PRIMARY KEY,
   name text NOT NULL CHECK (btrim(name) <> ''),
   timeline jsonb NOT NULL DEFAULT '[]'::jsonb,
+  active boolean NOT NULL DEFAULT true,
+  archived_at timestamptz,
+  archived_by_admin_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE stops ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE stops ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+ALTER TABLE stops ADD COLUMN IF NOT EXISTS archived_by_admin_id uuid;
 
 CREATE TABLE IF NOT EXISTS buses (
   id uuid PRIMARY KEY,
   name text NOT NULL CHECK (btrim(name) <> ''),
   capacity integer NOT NULL CHECK (capacity > 0),
+  active boolean NOT NULL DEFAULT true,
+  archived_at timestamptz,
+  archived_by_admin_id uuid,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE buses ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE buses ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+ALTER TABLE buses ADD COLUMN IF NOT EXISTS archived_by_admin_id uuid;
 
 CREATE TABLE IF NOT EXISTS bus_beacons (
   bus_id uuid PRIMARY KEY REFERENCES buses(id) ON DELETE CASCADE,
@@ -149,6 +161,21 @@ CREATE TABLE IF NOT EXISTS report_attempts (
   timestamp timestamptz NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS unmet_demand_events (
+  id uuid PRIMARY KEY,
+  rider_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  stop_id uuid NOT NULL REFERENCES stops(id) ON DELETE RESTRICT,
+  bus_id uuid NOT NULL REFERENCES buses(id) ON DELETE RESTRICT,
+  channel text NOT NULL,
+  trip_date date NOT NULL,
+  had_alternate_bus boolean NOT NULL,
+  alternate_bus_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+  timestamp timestamptz NOT NULL
+);
+CREATE INDEX IF NOT EXISTS unmet_demand_trip_stop_bus_idx
+  ON unmet_demand_events (trip_date DESC, stop_id, bus_id);
+CREATE INDEX IF NOT EXISTS unmet_demand_stranded_idx
+  ON unmet_demand_events (trip_date DESC, had_alternate_bus);
 CREATE TABLE IF NOT EXISTS incharge_overrides (
   id uuid PRIMARY KEY,
   incharge_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

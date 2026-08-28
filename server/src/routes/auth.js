@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getDb, nextId, hashPassword, verifyPassword, sanitizeUser, stopById } from '../db.js'
 import { signToken } from '../auth.js'
+import { emitAdmins } from '../realtime.js'
 
 const router = Router()
 
@@ -36,6 +37,7 @@ router.post('/register', (req, res) => {
     stopIds: [...new Set(stopIds)]
   }
   db.users.push(user)
+  emitAdmins('refresh', { reason: 'rider-registered' })
   res.status(201).json({ token: signToken(user), user: sanitizeUser(user) })
 })
 

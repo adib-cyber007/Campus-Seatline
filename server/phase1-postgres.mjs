@@ -91,7 +91,7 @@ async function databaseFingerprint() {
   const tables = [
     'users', 'stops', 'buses', 'bus_beacons', 'user_stops', 'bus_stops', 'incharge_assignments',
     'boarding_reports', 'occupancy_adjustments', 'ble_prompts', 'arrival_events',
-    'arrival_event_confirmations', 'report_attempts', 'incharge_overrides',
+    'arrival_event_confirmations', 'report_attempts', 'unmet_demand_events', 'incharge_overrides',
     'audit_records', 'daily_stop_overrides', 'notifications', 'fcm_device_tokens'
   ]
   const result = {}
@@ -187,6 +187,25 @@ async function main() {
   const pendingPrompt = (await requireCall('/rider/ble/simulate', {
     method: 'POST', token: riderTwo.token, body: { busId: busB.id }
   })).prompts[0]
+  await requireCall('/rider/incharge/buses/' + busA.id + '/available', {
+    method: 'POST', token: riderOne.token, body: { seatsAvailable: 0 }
+  })
+  const capacityReject = await call('/rider/soft-hold', {
+    method: 'POST', token: riderThree.token, body: { busId: busA.id, response: 'yes' }
+  })
+  check('pre-restart capacity rejection creates unmet demand',
+    capacityReject.status === 409 && capacityReject.data.error.includes('no seats available'))
+
+  const archivedStop = (await requireCall('/admin/stops', {
+    method: 'POST', token: admin.token,
+    body: { name: 'Archived Persistence Gate', timeline: [], busIds: [] }
+  }, 201)).stop
+  const archivedBus = (await requireCall('/admin/buses', {
+    method: 'POST', token: admin.token,
+    body: { name: 'Archived Persistence Bus', capacity: 8, stopIds: [archivedStop.id] }
+  }, 201)).bus
+  await requireCall('/admin/buses/' + archivedBus.id, { method: 'DELETE', token: admin.token })
+  await requireCall('/admin/stops/' + archivedStop.id, { method: 'DELETE', token: admin.token })
 
   const beforeAdmin = await requireCall('/admin/overview', { token: admin.token })
   const beforeRiderOne = await requireCall('/rider/overview', { token: riderOne.token })
@@ -247,6 +266,21 @@ async function main() {
     beforeRiderTwo.prompts.some(item => item.id === pendingPrompt.id))
   check('audit log survives restart unchanged',
     JSON.stringify(afterAdmin.audit) === JSON.stringify(beforeAdmin.audit))
+  check('unmet-demand rows and classifications survive process restart',
+    afterCounts.unmet_demand_events > 0 &&
+    afterAdmin.unmetDemand.events.some(item =>
+      item.userId === riderThree.user.id && item.busId === busA.id && item.hadAlternateBus === true))
+  const archivedRows = await pool.query(
+    'SELECT id, active FROM buses WHERE id = $1 UNION ALL SELECT id, active FROM stops WHERE id = $2',
+    [archivedBus.id, archivedStop.id]
+  )
+  check('archived Bus and Stop flags survive restart while active views hide them',
+    archivedRows.rows.length === 2 && archivedRows.rows.every(item => item.active === false) &&
+    !afterAdmin.buses.some(item => item.id === archivedBus.id) &&
+    !afterAdmin.stops.some(item => item.id === archivedStop.id))
+  check('archive audit records survive restart with historical entity names',
+    afterAdmin.audit.some(item => item.kind === 'entity_archived' && item.detail.includes('Archived Persistence Bus')) &&
+    afterAdmin.audit.some(item => item.kind === 'entity_archived' && item.detail.includes('Archived Persistence Gate')))
 
   const rapid = await Promise.all(Array.from({ length: 12 }, () =>
     call('/rider/prompts/' + pendingPrompt.id + '/respond', {

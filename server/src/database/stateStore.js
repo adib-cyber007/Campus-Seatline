@@ -9,7 +9,7 @@ export function emptyState() {
   return {
     users: [], stops: [], buses: [], occupancy: {}, boardingReports: [], reportAttempts: [],
     inchargeAssignments: [], arrivalEvents: [], prompts: [], notifications: [], overrides: [],
-    dailyStopOverrides: [], autoHoldEvaluations: [], deviceTokens: [], auditRecords: []
+    dailyStopOverrides: [], autoHoldEvaluations: [], deviceTokens: [], unmetDemandEvents: [], auditRecords: []
   }
 }
 
@@ -18,7 +18,7 @@ export async function loadState(client) {
   const results = {}
   for (const table of [
     'users', 'stops', 'buses', 'bus_beacons', 'user_stops', 'bus_stops', 'occupancy_adjustments',
-    'boarding_reports', 'report_attempts', 'incharge_assignments', 'arrival_events',
+    'boarding_reports', 'report_attempts', 'unmet_demand_events', 'incharge_assignments', 'arrival_events',
     'arrival_event_confirmations', 'ble_prompts', 'notifications', 'incharge_overrides',
     'daily_stop_overrides', 'auto_hold_evaluations', 'fcm_device_tokens', 'audit_records'
   ]) {
@@ -34,7 +34,8 @@ export async function loadState(client) {
   state.buses = results.buses.map(row => {
     const persistedBeacon = results.bus_beacons.find(item => item.bus_id === row.id)
     return {
-      id: row.id, name: row.name, capacity: row.capacity,
+      id: row.id, name: row.name, capacity: row.capacity, active: row.active,
+      archivedAt: iso(row.archived_at), archivedByAdminId: row.archived_by_admin_id,
       stopIds: results.bus_stops.filter(link => link.bus_id === row.id)
         .sort((a, b) => a.position - b.position).map(link => link.stop_id),
       beacon: beaconIdentityForBus(row.id, persistedBeacon ? {
@@ -46,7 +47,8 @@ export async function loadState(client) {
     }
   })
   state.stops = results.stops.map(row => ({
-    id: row.id, name: row.name, timeline: parsed(row.timeline) || [],
+    id: row.id, name: row.name, timeline: parsed(row.timeline) || [], active: row.active,
+    archivedAt: iso(row.archived_at), archivedByAdminId: row.archived_by_admin_id,
     busIds: results.bus_stops.filter(link => link.stop_id === row.id)
       .sort((a, b) => a.position - b.position).map(link => link.bus_id)
   }))
@@ -67,6 +69,11 @@ export async function loadState(client) {
     id: row.id, userId: row.user_id, busId: row.bus_id, stopId: row.stop_id,
     tripDate: day(row.trip_date), channel: row.channel, requested: row.requested,
     outcome: row.outcome, message: row.message, timestamp: iso(row.timestamp)
+  }))
+  state.unmetDemandEvents = results.unmet_demand_events.map(row => ({
+    id: row.id, userId: row.rider_id, stopId: row.stop_id, busId: row.bus_id,
+    channel: row.channel, tripDate: day(row.trip_date), hadAlternateBus: row.had_alternate_bus,
+    alternateBusIds: parsed(row.alternate_bus_ids) || [], timestamp: iso(row.timestamp)
   }))
   state.inchargeAssignments = results.incharge_assignments.map(row => ({
     id: row.id, riderId: row.rider_id, scopeType: row.scope_type, busId: row.bus_id,
@@ -131,15 +138,19 @@ async function insertRows(client, statement, rows) {
 export async function saveState(client, state) {
   state.auditRecords = deriveAuditRecords(state)
   await client.query(`TRUNCATE TABLE
-    arrival_event_confirmations, audit_records, report_attempts, incharge_overrides,
+    arrival_event_confirmations, audit_records, unmet_demand_events, report_attempts, incharge_overrides,
     notifications, fcm_device_tokens, ble_prompts, arrival_events, auto_hold_evaluations,
     daily_stop_overrides, boarding_reports, occupancy_adjustments, incharge_assignments,
     user_stops, bus_stops, bus_beacons, users, buses, stops CASCADE`)
 
-  await insertRows(client, `INSERT INTO stops (id,name,timeline) VALUES ($1,$2,$3::jsonb)`,
-    state.stops.map(item => [item.id, item.name, JSON.stringify(item.timeline || [])]))
-  await insertRows(client, `INSERT INTO buses (id,name,capacity) VALUES ($1,$2,$3)`,
-    state.buses.map(item => [item.id, item.name, item.capacity]))
+  await insertRows(client, `INSERT INTO stops
+    (id,name,timeline,active,archived_at,archived_by_admin_id) VALUES ($1,$2,$3::jsonb,$4,$5,$6)`,
+    state.stops.map(item => [item.id, item.name, JSON.stringify(item.timeline || []),
+      item.active !== false, item.archivedAt || null, item.archivedByAdminId || null]))
+  await insertRows(client, `INSERT INTO buses
+    (id,name,capacity,active,archived_at,archived_by_admin_id) VALUES ($1,$2,$3,$4,$5,$6)`,
+    state.buses.map(item => [item.id, item.name, item.capacity,
+      item.active !== false, item.archivedAt || null, item.archivedByAdminId || null]))
   await insertRows(client, `INSERT INTO bus_beacons
     (bus_id,service_uuid,advertising_mode,advertising_interval_ms,active)
     VALUES ($1,$2,$3,$4,$5)`, state.buses.map(item => {
@@ -186,6 +197,12 @@ export async function saveState(client, state) {
     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, state.reportAttempts.map(item => [
     item.id, item.userId, item.busId, item.stopId || null, item.tripDate, item.channel,
     item.requested, item.outcome, item.message || null, item.timestamp
+  ]))
+  await insertRows(client, `INSERT INTO unmet_demand_events
+    (id,rider_id,stop_id,bus_id,channel,trip_date,had_alternate_bus,alternate_bus_ids,timestamp)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`, state.unmetDemandEvents.map(item => [
+    item.id, item.userId, item.stopId, item.busId, item.channel, item.tripDate,
+    item.hadAlternateBus, JSON.stringify(item.alternateBusIds || []), item.timestamp
   ]))
   await insertRows(client, `INSERT INTO incharge_overrides
     (id,incharge_id,bus_id,trip_date,previous_available,new_available,previous_occupied,new_occupied,timestamp)

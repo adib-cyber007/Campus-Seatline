@@ -1,5 +1,7 @@
 import { app } from './src/app.js'
-import { getDb, occupancyOf, effectiveStopIdsForUser, resetDatabase } from './src/db.js'
+import {
+  getDb, occupancyOf, effectiveStopIdsForUser, resetDatabase, runDatabaseTransaction, nextId, todayKey
+} from './src/db.js'
 import { handleDetection, snapshot } from './src/services/occupancy.js'
 import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
 import { sendPushIfUserOffline } from './src/services/push.js'
@@ -592,6 +594,193 @@ async function main() {
   check('prompts from the former overridden stop are removed from active view',
     !overriddenOverview.prompts.some(promptItem => promptItem.stopId === singleStop.data.stop.id))
 
+  console.log('FEATURE 1: derived stop rider counts include stop-scoped Incharge authority')
+
+  const countStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Count Verification Gate', timeline: [], busIds: [] }
+  })
+  const countedRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Counted Home Rider', email: 'counted-home@campus.edu', password: 'pass1234', role: 'rider', stopIds: [countStop.data.stop.id] }
+  })
+  let countOverview = (await call('/admin/overview', { token: adminTok })).data
+  check('registering a rider increments the derived stop count',
+    countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 1)
+  check('rider registration emits the existing live Admin refresh signal',
+    realtimeEvents.some(event => event.room === 'role:admin' && event.event === 'refresh' && event.payload.reason === 'rider-registered'))
+
+  const externalCountRiderId = (await call('/me', { token: rider2 })).data.user.id
+  const externalStopGrant = await call('/admin/incharge-assignments', {
+    method: 'POST', token: adminTok,
+    body: { riderId: externalCountRiderId, scopeType: 'stop', stopId: countStop.data.stop.id }
+  })
+  countOverview = (await call('/admin/overview', { token: adminTok })).data
+  check('outside rider with stop-scoped Incharge authority increases that stop count',
+    countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 2)
+
+  const registeredStopGrant = await call('/admin/incharge-assignments', {
+    method: 'POST', token: adminTok,
+    body: { riderId: countedRider.data.user.id, scopeType: 'stop', stopId: countStop.data.stop.id }
+  })
+  countOverview = (await call('/admin/overview', { token: adminTok })).data
+  check('registered rider who is also Incharge is counted only once',
+    countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 2)
+
+  await call(`/admin/incharge-assignments/${externalStopGrant.data.assignment.id}`, { method: 'DELETE', token: adminTok })
+  countOverview = (await call('/admin/overview', { token: adminTok })).data
+  check('revoking an outside stop Incharge decreases the derived count',
+    countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 1)
+  await call(`/admin/incharge-assignments/${registeredStopGrant.data.assignment.id}`, { method: 'DELETE', token: adminTok })
+  countOverview = (await call('/admin/overview', { token: adminTok })).data
+  check('revoking a registered Incharge keeps their registration counted once',
+    countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 1)
+
+  console.log('FEATURE 2: dependency-safe Bus and Stop archive removal')
+
+  const blockedBusArchive = await call(`/admin/buses/${bus1.busId}`, { method: 'DELETE', token: adminTok })
+  check('bus removal is blocked while active rider state or Incharge authority exists',
+    blockedBusArchive.status === 409 && blockedBusArchive.data.dependencies.activeRiders > 0 &&
+    blockedBusArchive.data.error.includes('must be resolved first'))
+  const blockedStopArchive = await call(`/admin/stops/${countStop.data.stop.id}`, { method: 'DELETE', token: adminTok })
+  check('stop removal is blocked while registered riders remain',
+    blockedStopArchive.status === 409 && blockedStopArchive.data.dependencies.registeredRiders === 1 &&
+    blockedStopArchive.data.error.includes('registered riders'))
+
+  const archiveBusStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Archive Bus Gate', timeline: [], busIds: [] }
+  })
+  const archiveBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok, body: { name: 'Archive-Ready', capacity: 4, stopIds: [archiveBusStop.data.stop.id] }
+  })
+  const archiveRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Archive History Rider', email: 'archive-history@campus.edu', password: 'pass1234', role: 'rider', stopIds: [archiveBusStop.data.stop.id] }
+  })
+  await call('/rider/soft-hold', {
+    method: 'POST', token: archiveRider.data.token, body: { busId: archiveBus.data.bus.id, response: 'yes' }
+  })
+  await call('/rider/soft-hold/release', {
+    method: 'POST', token: archiveRider.data.token, body: { busId: archiveBus.data.bus.id }
+  })
+  const historicalBusReportId = getDb().boardingReports.find(report =>
+    report.userId === archiveRider.data.user.id && report.busId === archiveBus.data.bus.id
+  ).id
+  const archiveBusResult = await call(`/admin/buses/${archiveBus.data.bus.id}`, { method: 'DELETE', token: adminTok })
+  const afterBusArchive = (await call('/admin/overview', { token: adminTok })).data
+  check('inactive bus archives cleanly after its active rider state is released',
+    archiveBusResult.status === 200 && archiveBusResult.data.archived === true &&
+    !afterBusArchive.buses.some(bus => bus.id === archiveBus.data.bus.id) &&
+    getDb().buses.find(bus => bus.id === archiveBus.data.bus.id).active === false)
+  check('bus archive preserves its released report and named audit history',
+    getDb().boardingReports.some(report => report.id === historicalBusReportId && report.state === 'released') &&
+    afterBusArchive.audit.some(item => item.kind === 'entity_archived' && item.detail.includes('Archive-Ready')) &&
+    afterBusArchive.audit.some(item => item.kind === 'report_attempt' && item.detail.includes('Archive-Ready')))
+
+  const archiveStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Archive Empty Gate', timeline: [], busIds: [] }
+  })
+  const historicalStopAttemptId = nextId()
+  await runDatabaseTransaction(() => {
+    getDb().reportAttempts.push({
+      id: historicalStopAttemptId, userId: login.data.user.id, busId: bus1.busId,
+      stopId: archiveStop.data.stop.id, tripDate: todayKey(), channel: 'historical_fixture',
+      requested: 'no', outcome: 'no_change', message: 'Historical stop retention fixture',
+      timestamp: new Date().toISOString()
+    })
+  })
+  const archiveStopResult = await call(`/admin/stops/${archiveStop.data.stop.id}`, { method: 'DELETE', token: adminTok })
+  const afterStopArchive = (await call('/admin/overview', { token: adminTok })).data
+  check('empty stop archives cleanly and disappears from all active views',
+    archiveStopResult.status === 200 && archiveStopResult.data.archived === true &&
+    !afterStopArchive.stops.some(stop => stop.id === archiveStop.data.stop.id) &&
+    !(await call('/meta')).data.stops.some(stop => stop.id === archiveStop.data.stop.id) &&
+    getDb().stops.find(stop => stop.id === archiveStop.data.stop.id).active === false)
+  check('stop archive preserves historical report and audit references',
+    getDb().reportAttempts.some(attempt => attempt.id === historicalStopAttemptId) &&
+    afterStopArchive.audit.some(item => item.id === historicalStopAttemptId && item.detail.includes('Archive Empty Gate')) &&
+    afterStopArchive.audit.some(item => item.kind === 'entity_archived' && item.detail.includes('Archive Empty Gate')))
+
+  console.log('FEATURE 3: organized unmet-demand events and local read-only queries')
+
+  const strandedStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Stranded Demand Gate', timeline: [], busIds: [] }
+  })
+  const alternateStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Alternative Demand Gate', timeline: [], busIds: [] }
+  })
+  const fullOnlyBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok, body: { name: 'Full-Only', capacity: 1, stopIds: [strandedStop.data.stop.id] }
+  })
+  const fullWithAltBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok, body: { name: 'Full-With-Alt', capacity: 1, stopIds: [alternateStop.data.stop.id] }
+  })
+  const openAlternateBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok, body: { name: 'Open-Alternate', capacity: 4, stopIds: [alternateStop.data.stop.id] }
+  })
+  const inchargeUserId = (await call('/me', { token: incharge })).data.user.id
+  for (const targetBusId of [fullOnlyBus.data.bus.id, fullWithAltBus.data.bus.id]) {
+    await call('/admin/incharge-assignments', {
+      method: 'POST', token: adminTok, body: { riderId: inchargeUserId, scopeType: 'bus', busId: targetBusId }
+    })
+    await call(`/rider/incharge/buses/${targetBusId}/available`, {
+      method: 'POST', token: incharge, body: { seatsAvailable: 0 }
+    })
+  }
+  const strandedRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Stranded Demand Rider', email: 'stranded-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [strandedStop.data.stop.id] }
+  })
+  const alternateRider = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Alternative Demand Rider', email: 'alternative-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [alternateStop.data.stop.id] }
+  })
+  const strandedReject = await call('/rider/soft-hold', {
+    method: 'POST', token: strandedRider.data.token, body: { busId: fullOnlyBus.data.bus.id, response: 'yes' }
+  })
+  const alternateDetection = await call('/rider/ble/simulate', {
+    method: 'POST', token: alternateRider.data.token, body: { busId: fullWithAltBus.data.bus.id }
+  })
+  const alternateReject = await call(`/rider/prompts/${alternateDetection.data.prompts[0].id}/respond`, {
+    method: 'POST', token: alternateRider.data.token, body: { response: 'yes' }
+  })
+  const demandOverview = (await call('/admin/overview', { token: adminTok })).data
+  const strandedEvent = demandOverview.unmetDemand.events.find(event => event.userId === strandedRider.data.user.id)
+  const alternateEvent = demandOverview.unmetDemand.events.find(event => event.userId === alternateRider.data.user.id)
+  check('Soft Hold and BLE capacity rejections both create unmet-demand events',
+    strandedReject.status === 409 && alternateReject.status === 409 &&
+    strandedEvent?.channel === 'soft_intent' && alternateEvent?.channel === 'ble_confirmed')
+  check('unmet-demand events distinguish stranded riders from viable alternatives',
+    strandedEvent?.hadAlternateBus === false && strandedEvent?.alternateBusIds.length === 0 &&
+    alternateEvent?.hadAlternateBus === true && alternateEvent?.alternateBusIds.includes(openAlternateBus.data.bus.id))
+  check('Admin overview exposes aggregated stop–bus demand groups plus drill-down events',
+    demandOverview.unmetDemand.summary.some(group =>
+      group.stopId === strandedStop.data.stop.id && group.busId === fullOnlyBus.data.bus.id &&
+      group.count === 1 && group.strandedCount === 1) &&
+    demandOverview.unmetDemand.summary.some(group =>
+      group.stopId === alternateStop.data.stop.id && group.busId === fullWithAltBus.data.bus.id &&
+      group.count === 1 && group.hadAlternativeCount === 1))
+  check('unmet-demand events also appear in the immutable audit trail',
+    demandOverview.audit.filter(item => item.kind === 'unmet_demand').length >= 2)
+
+  const demandByStop = new Map()
+  for (const event of demandOverview.unmetDemand.events) {
+    const item = demandByStop.get(event.stopId) || { stopName: event.stopName, count: 0, stranded: 0 }
+    item.count += 1
+    if (!event.hadAlternateBus) item.stranded += 1
+    demandByStop.set(event.stopId, item)
+  }
+  const expectedTopDemandStop = [...demandByStop.values()]
+    .sort((a, b) => b.count - a.count || b.stranded - a.stranded || a.stopName.localeCompare(b.stopName))[0]
+  const beforeLocalDemandQuestion = JSON.stringify(getDb())
+  const localDemandAnswer = await answerAdminQuestion('Which stop had the most unmet demand today?', {
+    generator: async () => { throw new Error('External generator must not run for unmet demand queries') }
+  })
+  check('Admin assistant answers unmet-demand questions correctly through the local read-only query layer',
+    localDemandAnswer.model === 'local-read-only' && localDemandAnswer.answer.includes(expectedTopDemandStop.stopName) &&
+    localDemandAnswer.answer.includes(`${expectedTopDemandStop.count} rejected report`))
+  check('local unmet-demand questions neither call a provider nor mutate data',
+    JSON.stringify(getDb()) === beforeLocalDemandQuestion)
   console.log('FEATURE: Android FCM device-token lifecycle and offline fallback')
 
   const fcmTokenA = 'fcm-test-token-a-12345678901234567890'
@@ -693,7 +882,7 @@ async function main() {
 
   const assistantSnapshot = adminReadSnapshot()
   check('assistant snapshot contains admin data but no credentials',
-    assistantSnapshot.stops.length === getDb().stops.length &&
+    assistantSnapshot.stops.length === getDb().stops.filter(item => item.active !== false).length &&
     !JSON.stringify(assistantSnapshot).includes('passwordHash'))
   let generatorInput = null
   const beforeReadQuestion = JSON.stringify(getDb())

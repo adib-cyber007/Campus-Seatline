@@ -1,11 +1,12 @@
 import {
   getDb, nextId, todayKey, occupancyOf, pushNotification, busById, stopById, userById,
   busesForStops, activeReportForUser, transitionRiderReport, releaseRiderSoftHold,
-  effectiveStopIdsForUser, runDatabaseTransaction
+  effectiveStopIdsForUser, runDatabaseTransaction, activeBuses
 } from '../db.js'
 import { emitAdmins, emitAll, emitToUser } from '../realtime.js'
 import { auditSnapshot } from './audit.js'
 import { sendPushIfUserOffline, sendPushToUser } from './push.js'
+import { recordUnmetDemand } from './unmetDemand.js'
 
 export const PROMPT_TTL_MS = 120000
 
@@ -86,7 +87,7 @@ export function tripStatesForUser(userId) {
 
 export function snapshot() {
   const db = getDb()
-  return db.buses.map(bus => {
+  return activeBuses().map(bus => {
     const occ = occupancyOf(bus.id)
     const { baseOccupied, softHolds } = tripCounts(bus.id)
     const seatsOccupied = clamp(baseOccupied + occ.manualAdjustment, 0, bus.capacity)
@@ -124,6 +125,20 @@ function logHoldRelease(userId, released, channel, outcome, message = null) {
   occupancyOf(released.busId).lastUpdated = new Date().toISOString()
 }
 
+function recordCapacityRejection({ user, bus, stopId, channel }) {
+  if (!stopId || !stopById(stopId)) return null
+  const counts = new Map(snapshot().map(item => [item.busId, item]))
+  const alternateBusIds = busesForStops(effectiveStopIdsForUser(user))
+    .filter(candidate => candidate.id !== bus.id && (counts.get(candidate.id)?.availableSeats || 0) > 0)
+    .map(candidate => candidate.id)
+  return recordUnmetDemand({
+    userId: user.id,
+    stopId,
+    busId: bus.id,
+    channel,
+    alternateBusIds
+  })
+}
 export function applySoftHold(user, bus, response, { source = 'manual', stopId: requestedStopId } = {}) {
   const now = new Date().toISOString()
   const stopId = requestedStopId || effectiveStopIdsForUser(user)[0] || null
@@ -159,6 +174,7 @@ export function applySoftHold(user, bus, response, { source = 'manual', stopId: 
         userId: user.id, busId: bus.id, stopId, channel: 'soft_intent', requested: 'yes',
         outcome: 'rejected_no_availability', message: 'No seats are currently available'
       })
+      recordCapacityRejection({ user, bus, stopId, channel: 'soft_intent' })
       feedback(user.id, `${bus.name} currently has no seats available, so a Soft Hold was not added.`, 'error')
       broadcastAll()
       syncRiderState(user.id)
@@ -358,6 +374,7 @@ export function applyBleResponse(user, prompt, response) {
         channel: 'ble_confirmed', requested: 'yes',
         outcome: 'rejected_no_availability', message: 'No seats are currently available'
       })
+      recordCapacityRejection({ user, bus, stopId: stop.id, channel: 'ble_confirmed' })
       feedback(user.id, `${bus.name} currently has no seats available, so you were not added.`, 'error')
       return finish({
         ok: false, status: 409, error: `${bus.name} currently has no seats available`,
