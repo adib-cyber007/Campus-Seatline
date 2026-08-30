@@ -1,6 +1,6 @@
 # Android FCM manual test checklist
 
-Release under test: **1.3.4** (`versionCode 9`), upgrading from **1.3.3** (`versionCode 8`).
+Release under test: **1.3.5** (`versionCode 10`), upgrading from **1.3.4** (`versionCode 9`).
 
 ## Firebase console setup
 
@@ -19,7 +19,7 @@ Release under test: **1.3.4** (`versionCode 9`), upgrading from **1.3.3** (`vers
 
 ## Device and API checks
 
-1. Install the prior code-3 APK, then install the code-4 APK over it. Confirm Android updates the app without clearing rider data.
+1. Install the prior code-9 APK, then install the code-10 APK over it. Confirm Android updates the app without clearing rider data.
 2. On a fresh install, connect to the backend, log in as a rider, and accept the Android 13+ notification permission. Confirm one active device-token record is created in the same session.
 3. Register the same token repeatedly and rotate it using `previousToken`; confirm one record is updated rather than duplicated.
 4. Log out and confirm the server token is inactive and the native encrypted JWT/session is cleared before another user signs in.

@@ -16,6 +16,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelUuid;
 
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -26,7 +30,9 @@ import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @CapacitorPlugin(
@@ -49,10 +55,7 @@ public class SeatlineBleScannerPlugin extends Plugin {
     private ScanCallback callback;
     private Runnable timeoutTask;
     private boolean scanning;
-    private String expectedFormat;
-    private String expectedUuid;
-    private int expectedMajor;
-    private int expectedMinor;
+    private List<SeatlineBeaconConfig.Target> expectedTargets = new ArrayList<>();
     private int expectedMinRssi;
 
     @Override
@@ -70,11 +73,8 @@ public class SeatlineBleScannerPlugin extends Plugin {
         status.put("minimumAndroidApi", Build.VERSION_CODES.S);
         status.put("scanning", scanning);
         status.put("backgroundMonitoring", background.enabled);
-        status.put("backgroundBusId", background.busId);
-        status.put("backgroundFormat", background.format);
-        status.put("backgroundUuid", background.uuid);
-        status.put("backgroundMajor", background.major);
-        status.put("backgroundMinor", background.minor);
+        status.put("backgroundTargetCount", background.targets.size());
+        status.put("backgroundTargetSignature", background.targetSignature());
         status.put("backgroundMinRssi", background.minRssi);
         status.put("permission", supported ? getPermissionState(BLUETOOTH_PERMISSION).toString().toLowerCase() : "unsupported");
         call.resolve(status);
@@ -90,7 +90,7 @@ public class SeatlineBleScannerPlugin extends Plugin {
             call.reject("This device does not support Bluetooth Low Energy scanning");
             return;
         }
-        if (!readExpectedBeacon(call)) return;
+        if (!readExpectedBeacons(call)) return;
 
         if (getPermissionState(BLUETOOTH_PERMISSION) != PermissionState.GRANTED) {
             requestPermissionForAlias(BLUETOOTH_PERMISSION, call, "bluetoothPermissionCallback");
@@ -111,17 +111,12 @@ public class SeatlineBleScannerPlugin extends Plugin {
             call.reject("Background beacon monitoring requires Android 12 or newer");
             return;
         }
-        if (!readExpectedBeacon(call)) return;
-        String busId = clean(call.getString("busId"));
-        if (busId.isEmpty()) {
-            call.reject("Choose the bus represented by this beacon");
-            return;
-        }
+        if (!readExpectedBeacons(call)) return;
         if (getPermissionState(BLUETOOTH_PERMISSION) != PermissionState.GRANTED) {
             requestPermissionForAlias(BLUETOOTH_PERMISSION, call, "backgroundPermissionCallback");
             return;
         }
-        beginBackgroundScan(call, busId);
+        beginBackgroundScan(call);
     }
 
     @PluginMethod
@@ -137,7 +132,7 @@ public class SeatlineBleScannerPlugin extends Plugin {
             call.reject("Bluetooth nearby-device permission is required for background beacon monitoring");
             return;
         }
-        beginBackgroundScan(call, clean(call.getString("busId")));
+        beginBackgroundScan(call);
     }
 
     @PermissionCallback
@@ -149,49 +144,65 @@ public class SeatlineBleScannerPlugin extends Plugin {
         beginScan(call);
     }
 
-    private boolean readExpectedBeacon(PluginCall call) {
-        String format = clean(call.getString("format"));
-        expectedFormat = format.isEmpty() ? FORMAT_IBEACON : format;
-        if (!FORMAT_IBEACON.equals(expectedFormat) && !FORMAT_SERVICE_UUID.equals(expectedFormat)) {
+    private boolean readExpectedBeacons(PluginCall call) {
+        String defaultFormat = clean(call.getString("format"));
+        if (defaultFormat.isEmpty()) defaultFormat = FORMAT_SERVICE_UUID;
+        if (!FORMAT_IBEACON.equals(defaultFormat) && !FORMAT_SERVICE_UUID.equals(defaultFormat)) {
             call.reject("Beacon format must be ibeacon or service_uuid");
             return false;
         }
-        String uuid = clean(call.getString("uuid"));
-        Integer major = call.getInt("major");
-        Integer minor = call.getInt("minor");
+
+        List<SeatlineBeaconConfig.Target> targets = new ArrayList<>();
+        Set<String> busIds = new HashSet<>();
+        Set<String> identities = new HashSet<>();
         try {
-            expectedUuid = UUID.fromString(uuid).toString();
-        } catch (IllegalArgumentException error) {
-            call.reject("Enter a valid iBeacon UUID");
+            JSONArray values = new JSONArray(clean(call.getString("beaconsJson")));
+            for (int index = 0; index < values.length(); index++) {
+                JSONObject value = values.getJSONObject(index);
+                String format = clean(value.optString("format", defaultFormat));
+                int major = value.optInt("major", -1);
+                int minor = value.optInt("minor", -1);
+                SeatlineBeaconConfig.Target target = new SeatlineBeaconConfig.Target(
+                    clean(value.optString("busId", "")),
+                    format,
+                    clean(value.optString("uuid", "")),
+                    major,
+                    minor
+                );
+                String identity = target.format + ':' + target.uuid + ':' + target.major + ':' + target.minor;
+                if (!busIds.add(target.busId)) {
+                    call.reject("Each monitored bus must appear only once");
+                    return false;
+                }
+                if (!identities.add(identity)) {
+                    call.reject("Each monitored bus must have a unique beacon identity");
+                    return false;
+                }
+                targets.add(target);
+            }
+        } catch (JSONException | IllegalArgumentException error) {
+            call.reject("The server supplied an invalid bus beacon list", error);
             return false;
         }
-        if (FORMAT_IBEACON.equals(expectedFormat) && (!validComponent(major) || !validComponent(minor))) {
-            call.reject("iBeacon major and minor must be integers between 0 and 65535");
+        if (targets.isEmpty()) {
+            call.reject("No active bus beacons are assigned to your stop");
             return false;
         }
-        expectedMajor = major == null ? -1 : major;
-        expectedMinor = minor == null ? -1 : minor;
+
         Integer minRssi = call.getInt("minRssi", SeatlineBeaconConfig.DEFAULT_MIN_RSSI);
         if (minRssi < SeatlineBeaconConfig.MIN_RSSI_LIMIT || minRssi > SeatlineBeaconConfig.MAX_RSSI_LIMIT) {
             call.reject("Proximity threshold must be between -100 and -30 dBm");
             return false;
         }
+        expectedTargets = targets;
         expectedMinRssi = minRssi;
         return true;
     }
 
-    private void beginBackgroundScan(PluginCall call, String busId) {
-        if (busId.isEmpty()) {
-            call.reject("Choose the bus represented by this beacon");
-            return;
-        }
+    private void beginBackgroundScan(PluginCall call) {
         SeatlineBeaconConfig config = new SeatlineBeaconConfig(
             true,
-            expectedFormat,
-            expectedUuid,
-            expectedMajor,
-            expectedMinor,
-            busId,
+            expectedTargets,
             expectedMinRssi
         );
         SeatlineBeaconConfig.save(getContext(), config);
@@ -202,7 +213,8 @@ public class SeatlineBleScannerPlugin extends Plugin {
         }
         call.resolve(new JSObject()
             .put("backgroundMonitoring", true)
-            .put("busId", busId)
+            .put("targetCount", config.targets.size())
+            .put("targetSignature", config.targetSignature())
             .put("minRssi", expectedMinRssi));
     }
 
@@ -225,18 +237,9 @@ public class SeatlineBleScannerPlugin extends Plugin {
             callback = createCallback();
             scanning = true;
 
-            List<ScanFilter> filters;
-            if (FORMAT_SERVICE_UUID.equals(expectedFormat)) {
-                filters = serviceUuidFilters(expectedUuid);
-            } else {
-                byte[] prefix = new byte[] { 0x02, 0x15 };
-                byte[] mask = new byte[] { (byte) 0xff, (byte) 0xff };
-                filters = java.util.Collections.singletonList(
-                    new ScanFilter.Builder()
-                        .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
-                        .build()
-                );
-            }
+            List<ScanFilter> filters = SeatlineBackgroundBleScanner.filters(
+                new SeatlineBeaconConfig(true, expectedTargets, expectedMinRssi)
+            );
             ScanSettings settings = new ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build();
@@ -261,28 +264,12 @@ public class SeatlineBleScannerPlugin extends Plugin {
                 if (!SeatlineBeaconConfig.isWithinProximity(result.getRssi(), expectedMinRssi)) return;
                 ScanRecord record = result.getScanRecord();
                 if (record == null) return;
-                JSObject detection = new JSObject();
-                detection.put("format", expectedFormat);
-                if (FORMAT_SERVICE_UUID.equals(expectedFormat)) {
-                    List<ParcelUuid> serviceUuids = record.getServiceUuids();
-                    ParcelUuid expected = new ParcelUuid(UUID.fromString(expectedUuid));
-                    boolean listedService = serviceUuids != null && serviceUuids.contains(expected);
-                    boolean serviceData = record.getServiceData(expected) != null;
-                    if (!listedService && !serviceData) return;
-                    detection.put("uuid", expectedUuid);
-                    if (record.getTxPowerLevel() != Integer.MIN_VALUE) {
-                        detection.put("txPower", record.getTxPowerLevel());
-                    }
-                } else {
-                    IBeaconParser.Beacon beacon = IBeaconParser.parse(
-                        record.getManufacturerSpecificData(APPLE_MANUFACTURER_ID)
-                    );
-                    if (beacon == null || !beacon.matches(expectedUuid, expectedMajor, expectedMinor)) return;
-                    detection.put("uuid", beacon.uuid);
-                    detection.put("major", beacon.major);
-                    detection.put("minor", beacon.minor);
-                    detection.put("txPower", beacon.txPower);
+                JSObject detection = null;
+                for (SeatlineBeaconConfig.Target target : expectedTargets) {
+                    detection = detectionFor(record, target);
+                    if (detection != null) break;
                 }
+                if (detection == null) return;
                 detection.put("rssi", result.getRssi());
                 detection.put("detectedAt", System.currentTimeMillis());
                 stopScanInternal(null);
@@ -296,6 +283,34 @@ public class SeatlineBleScannerPlugin extends Plugin {
                 emitState("failed", "Android BLE scan failed with code " + errorCode);
             }
         };
+    }
+
+    private static JSObject detectionFor(ScanRecord record, SeatlineBeaconConfig.Target target) {
+        JSObject detection = new JSObject();
+        detection.put("busId", target.busId);
+        detection.put("format", target.format);
+        if (FORMAT_SERVICE_UUID.equals(target.format)) {
+            List<ParcelUuid> serviceUuids = record.getServiceUuids();
+            ParcelUuid expected = new ParcelUuid(UUID.fromString(target.uuid));
+            boolean listedService = serviceUuids != null && serviceUuids.contains(expected);
+            boolean serviceData = record.getServiceData(expected) != null;
+            if (!listedService && !serviceData) return null;
+            detection.put("uuid", target.uuid);
+            if (record.getTxPowerLevel() != Integer.MIN_VALUE) {
+                detection.put("txPower", record.getTxPowerLevel());
+            }
+            return detection;
+        }
+
+        IBeaconParser.Beacon beacon = IBeaconParser.parse(
+            record.getManufacturerSpecificData(APPLE_MANUFACTURER_ID)
+        );
+        if (beacon == null || !beacon.matches(target.uuid, target.major, target.minor)) return null;
+        detection.put("uuid", beacon.uuid);
+        detection.put("major", beacon.major);
+        detection.put("minor", beacon.minor);
+        detection.put("txPower", beacon.txPower);
+        return detection;
     }
 
     private void stopScanInternal(String state) {
@@ -344,10 +359,6 @@ public class SeatlineBleScannerPlugin extends Plugin {
         filters.add(new ScanFilter.Builder().setServiceUuid(expected).build());
         filters.add(new ScanFilter.Builder().setServiceData(expected, new byte[0]).build());
         return filters;
-    }
-
-    private static boolean validComponent(Integer value) {
-        return value != null && value >= 0 && value <= 65_535;
     }
 
     private static String clean(String value) {

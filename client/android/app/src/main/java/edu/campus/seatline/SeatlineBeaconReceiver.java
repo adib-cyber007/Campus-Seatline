@@ -34,7 +34,7 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
         long now = System.currentTimeMillis();
         if (detection == null
             || !SeatlineBeaconConfig.isWithinProximity(detection.rssi, config.minRssi)
-            || !SeatlineBeaconConfig.claimSubmission(context, now)) return;
+            || !SeatlineBeaconConfig.claimSubmission(context, detection.target, now)) return;
 
         SecureSessionStore.Session session = SecureSessionStore.load(context);
         if (session == null) {
@@ -48,13 +48,13 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
         NETWORK_EXECUTOR.execute(() -> {
             try {
                 SeatlineBleDetectionClient.Response response =
-                    SeatlineBleDetectionClient.post(session, config, detection);
+                    SeatlineBleDetectionClient.post(session, detection.target, detection);
                 int status = response.statusCode;
-                if (status == 400 || status == 401 || status == 403 || status == 404) {
+                if (status == 401) {
                     SeatlineBeaconConfig.disable(appContext);
                     SeatlineBackgroundBleScanner.stop(appContext);
                 } else if (status < 200 || status >= 500) {
-                    SeatlineBeaconConfig.releaseSubmission(appContext, now);
+                    SeatlineBeaconConfig.releaseSubmission(appContext, detection.target, now);
                 } else if (status < 300 && response.prompt != null) {
                     showPromptNotification(appContext, session, response.prompt);
                 }
@@ -62,7 +62,7 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
                 // A 409 is also safe: duplicate-report prevention deliberately rejected it.
             } catch (IOException | JSONException | RuntimeException ignored) {
                 // Keep monitoring; the next Android callback may retry the failed request.
-                SeatlineBeaconConfig.releaseSubmission(appContext, now);
+                SeatlineBeaconConfig.releaseSubmission(appContext, detection.target, now);
             } finally {
                 pendingResult.finish();
             }
@@ -116,29 +116,43 @@ public class SeatlineBeaconReceiver extends BroadcastReceiver {
     static Detection match(ScanResult result, SeatlineBeaconConfig config) {
         ScanRecord record = result == null ? null : result.getScanRecord();
         if (record == null) return null;
-        if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(config.format)) {
+        for (SeatlineBeaconConfig.Target target : config.targets) {
+            Detection detection = match(result, record, target);
+            if (detection != null) return detection;
+        }
+        return null;
+    }
+
+    private static Detection match(
+        ScanResult result,
+        ScanRecord record,
+        SeatlineBeaconConfig.Target target
+    ) {
+        if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(target.format)) {
             List<ParcelUuid> serviceUuids = record.getServiceUuids();
-            ParcelUuid expected = new ParcelUuid(UUID.fromString(config.uuid));
+            ParcelUuid expected = new ParcelUuid(UUID.fromString(target.uuid));
             boolean listedService = serviceUuids != null && serviceUuids.contains(expected);
             boolean serviceData = record.getServiceData(expected) != null;
             if (!listedService && !serviceData) return null;
             Integer txPower = record.getTxPowerLevel() == Integer.MIN_VALUE
                 ? null
                 : record.getTxPowerLevel();
-            return new Detection(result.getRssi(), txPower);
+            return new Detection(target, result.getRssi(), txPower);
         }
         IBeaconParser.Beacon beacon = IBeaconParser.parse(
             record.getManufacturerSpecificData(SeatlineBackgroundBleScanner.APPLE_MANUFACTURER_ID)
         );
-        if (beacon == null || !beacon.matches(config.uuid, config.major, config.minor)) return null;
-        return new Detection(result.getRssi(), beacon.txPower);
+        if (beacon == null || !beacon.matches(target.uuid, target.major, target.minor)) return null;
+        return new Detection(target, result.getRssi(), beacon.txPower);
     }
 
     static final class Detection {
+        final SeatlineBeaconConfig.Target target;
         final int rssi;
         final Integer txPower;
 
-        Detection(int rssi, Integer txPower) {
+        Detection(SeatlineBeaconConfig.Target target, int rssi, Integer txPower) {
+            this.target = target;
             this.rssi = rssi;
             this.txPower = txPower;
         }

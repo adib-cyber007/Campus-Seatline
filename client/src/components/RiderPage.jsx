@@ -50,6 +50,19 @@ function availabilityState(available, capacity) {
   return { key: 'open', label: 'Seats open', symbol: '✓', note: 'Space available' }
 }
 
+function activeBeaconTargets(buses = []) {
+  return buses
+    .filter(bus => bus.beacon?.active !== false && bus.beacon?.serviceUuid)
+    .map(bus => ({ busId: bus.busId, uuid: bus.beacon.serviceUuid }))
+}
+
+function beaconTargetSignature(targets = []) {
+  return targets
+    .map(target => `${target.busId}:${String(target.uuid).toLowerCase()}`)
+    .sort()
+    .join('|')
+}
+
 function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDrafts, busyKey, onSoft, onRelease, onAvailable }) {
   const lockedByOther = Boolean(activeIsBoarded && activeBusId !== bus.busId)
   const movingHold = Boolean(activeBusId && !activeIsBoarded && activeBusId !== bus.busId)
@@ -165,10 +178,11 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
 
 export default function RiderPage({ user, toast, occupancy, prompts, notifications, refreshTick, connectionStatus }) {
   const [overview, setOverview] = useState(null)
-  const [bleBus, setBleBus] = useState('')
   const [beaconMinRssi, setBeaconMinRssi] = useState(String(DEFAULT_BEACON_MIN_RSSI))
   const [bleScan, setBleScan] = useState({ active: false, message: 'Ready to scan' })
-  const [backgroundBle, setBackgroundBle] = useState({ active: false, busId: '', serviceUuid: '', message: 'Background alerts are off' })
+  const [backgroundBle, setBackgroundBle] = useState({
+    active: false, targetCount: 0, targetSignature: '', message: 'Background alerts are off'
+  })
   const [availableDrafts, setAvailableDrafts] = useState({})
   const [stopDraft, setStopDraft] = useState('')
   const [busyKey, setBusyKey] = useState('')
@@ -187,17 +201,47 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
       .then(status => {
         setBackgroundBle({
           active: Boolean(status.backgroundMonitoring),
-          busId: status.backgroundBusId || '',
-          serviceUuid: status.backgroundUuid || '',
-          message: status.backgroundMonitoring ? 'Background proximity alerts are active' : 'Background alerts are off'
+          targetCount: Number(status.backgroundTargetCount || 0),
+          targetSignature: status.backgroundTargetSignature || '',
+          message: status.backgroundMonitoring
+            ? `Background proximity alerts are active for ${status.backgroundTargetCount || 0} bus beacon${status.backgroundTargetCount === 1 ? '' : 's'}`
+            : 'Background alerts are off'
         })
         if (status.backgroundMonitoring) {
-          setBleBus(status.backgroundBusId || '')
           setBeaconMinRssi(String(status.backgroundMinRssi ?? DEFAULT_BEACON_MIN_RSSI))
         }
       })
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!supportsNativeBeaconScan() || !overview || !backgroundBle.active) return
+    const buses = overview.boardedBusIds?.length ? [] : overview.buses
+    const targets = activeBeaconTargets(buses)
+    const targetSignature = beaconTargetSignature(targets)
+    if (targetSignature === backgroundBle.targetSignature) return
+
+    if (!targets.length) {
+      void disableBackgroundBeaconMonitoring().then(() => {
+        setBackgroundBle({ active: false, targetCount: 0, targetSignature: '', message: 'No eligible bus beacons remain' })
+      }).catch(() => {})
+      return
+    }
+
+    void enableBackgroundBeaconMonitoring({
+      beacons: targets,
+      minRssi: Number(beaconMinRssi)
+    }).then(result => {
+      setBackgroundBle({
+        active: true,
+        targetCount: Number(result.targetCount || targets.length),
+        targetSignature: result.targetSignature || targetSignature,
+        message: `Background alerts updated for ${targets.length} bus beacon${targets.length === 1 ? '' : 's'} at your stop`
+      })
+    }).catch(error => {
+      setBackgroundBle(current => ({ ...current, message: `Could not update bus beacons: ${error.message}` }))
+    })
+  }, [overview, backgroundBle.active, backgroundBle.targetSignature, beaconMinRssi])
 
   const run = async (key, action) => {
     if (busyKey) return
@@ -232,11 +276,6 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
     toast('Boarding stop reset to your registered stop', 'feedback')
   })
 
-  const triggerBle = () => run('ble', async () => {
-    await api('/rider/ble/simulate', { method: 'POST', body: { busId: bleBus } })
-    toast('Boarding confirmation is ready', 'prompt')
-  })
-
   const stopBeaconScan = async (message = 'Beacon scan stopped') => {
     const controller = scanControllerRef.current
     scanControllerRef.current = null
@@ -245,39 +284,41 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   }
 
   const startBeaconScan = async () => {
-    if (!bleBus || busyKey || bleScan.active) return
+    if (busyKey || bleScan.active) return
     if (!supportsNativeBeaconScan()) {
       toast('Install the Android APK to test an external Bluetooth beacon', 'error')
       return
     }
 
-    const selectedBus = overview.buses.find(bus => bus.busId === bleBus)
-    const serviceUuid = selectedBus?.beacon?.serviceUuid
-    if (!serviceUuid || selectedBus.beacon.active === false) {
-      toast('This bus does not have an active server-assigned beacon', 'error')
+    const targets = activeBeaconTargets(overview.buses)
+    if (!targets.length) {
+      toast('No active bus beacons are assigned to your stop', 'error')
       return
     }
 
-    const selectedBusId = bleBus
     detectionHandledRef.current = false
-    setBleScan({ active: true, message: `Scanning for ${selectedBus.busName}'s service UUID...` })
+    setBleScan({ active: true, message: `Scanning for all ${targets.length} bus beacon${targets.length === 1 ? '' : 's'} at your stop...` })
 
     let controller
     try {
       controller = await startServiceUuidScan({
-        uuid: serviceUuid,
+        beacons: targets,
         minRssi: Number(beaconMinRssi),
         timeoutMs: 30000,
         onDetected: detection => {
           if (detectionHandledRef.current) return
           detectionHandledRef.current = true
-          setBleScan({ active: true, message: `Beacon matched at RSSI ${detection.rssi}. Verifying with the server...` })
+          const matchedBus = overview.buses.find(bus => bus.busId === detection.busId)
+          setBleScan({
+            active: true,
+            message: `${matchedBus?.busName || 'Bus'} matched at RSSI ${detection.rssi}. Verifying with the server...`
+          })
           void (async () => {
             try {
               await api('/rider/ble/detected', {
                 method: 'POST',
                 body: {
-                  busId: selectedBusId,
+                  busId: detection.busId,
                   beacon: {
                     format: detection.format,
                     uuid: detection.uuid,
@@ -286,8 +327,8 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   }
                 }
               })
-              toast('Bus beacon verified - boarding confirmation is ready', 'prompt')
-              setBleScan({ active: false, message: 'Beacon matched the server’s bus mapping' })
+              toast(`${matchedBus?.busName || 'Bus'} beacon verified - boarding confirmation is ready`, 'prompt')
+              setBleScan({ active: false, message: `${matchedBus?.busName || 'Bus'} matched the server’s bus mapping` })
               await load()
             } catch (error) {
               setBleScan({ active: false, message: error.message })
@@ -327,38 +368,36 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
     await api(`/rider/prompts/${id}/respond`, { method: 'POST', body: { response } })
     if (response === 'yes' && backgroundBle.active) {
       await disableBackgroundBeaconMonitoring()
-      setBackgroundBle({ active: false, busId: '', serviceUuid: '', message: 'Boarding confirmed; background alerts stopped' })
+      setBackgroundBle({ active: false, targetCount: 0, targetSignature: '', message: 'Boarding confirmed; background alerts stopped' })
     }
   })
 
   const enableBackgroundBle = () => run('ble-background', async () => {
-    if (!bleBus || !supportsNativeBeaconScan()) {
-      throw new Error('Choose a bus in the Android app before enabling background alerts')
+    if (!supportsNativeBeaconScan()) {
+      throw new Error('Background beacon monitoring is available only in the Android app')
     }
-    const selectedBus = overview.buses.find(bus => bus.busId === bleBus)
-    const serviceUuid = selectedBus?.beacon?.serviceUuid
-    if (!serviceUuid || selectedBus.beacon.active === false) {
-      throw new Error('This bus does not have an active server-assigned beacon')
+    const targets = activeBeaconTargets(overview.buses)
+    if (!targets.length) {
+      throw new Error('No active bus beacons are assigned to your stop')
     }
     const result = await enableBackgroundBeaconMonitoring({
-      busId: bleBus,
-      uuid: serviceUuid,
+      beacons: targets,
       minRssi: Number(beaconMinRssi)
     })
     setBackgroundBle({
       active: true,
-      busId: result.busId || bleBus,
-      serviceUuid,
-      message: 'Background proximity alerts are active, including when the app is closed'
+      targetCount: Number(result.targetCount || targets.length),
+      targetSignature: result.targetSignature || beaconTargetSignature(targets),
+      message: `Background proximity alerts are active for all ${targets.length} bus beacon${targets.length === 1 ? '' : 's'} at your stop, including when the app is closed`
     })
-    toast('Background beacon alerts enabled', 'feedback')
+    toast(`Background alerts enabled for ${targets.length} bus${targets.length === 1 ? '' : 'es'} at your stop`, 'feedback')
   })
   const disableBackgroundBle = () => run('ble-background', async () => {
     await disableBackgroundBeaconMonitoring()
     setBackgroundBle({
       active: false,
-      busId: '',
-      serviceUuid: '',
+      targetCount: 0,
+      targetSignature: '',
       message: 'Background alerts are off'
     })
     toast('Background beacon alerts disabled', 'feedback')
@@ -391,10 +430,9 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   const eligibleBleBuses = activeIsBoarded
     ? []
     : overview.buses
-  const selectedBleBus = eligibleBleBuses.find(bus => bus.busId === bleBus)
-  const selectedBeacon = selectedBleBus?.beacon
+  const beaconTargets = activeBeaconTargets(eligibleBleBuses)
   const parsedBeaconMinRssi = Number(beaconMinRssi)
-  const beaconConfigValid = Boolean(selectedBeacon?.active && selectedBeacon.serviceUuid) &&
+  const beaconConfigValid = beaconTargets.length > 0 &&
     Number.isInteger(parsedBeaconMinRssi) && parsedBeaconMinRssi >= -100 && parsedBeaconMinRssi <= -30
   const timeline = overview.stops.flatMap(stop => stop.timeline.map(row => ({ ...row, stopName: stop.name })))
   const beaconConfigLocked = bleScan.active || backgroundBle.active
@@ -446,19 +484,17 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
           <div className="utility-copy">
             <span className="eyebrow">External beacon test</span>
             <h2>Detect bus proximity</h2>
-            <p>Detect a configured bus beacon in the foreground or while the app is closed. No GPS or location permission is used.</p>
+            <p>Seatline automatically watches every active bus beacon serving your stop, in the foreground or while the app is closed. No bus selection, GPS, or location permission is required.</p>
           </div>
           {eligibleBleBuses.length === 0 ? (
             <div className="decision-state success compact"><span aria-hidden="true">✓</span><span><strong>Boarding already confirmed</strong><small>No further report is needed this trip.</small></span></div>
           ) : (
             <>
               <div className="ble-actions">
-                <label>Bus to detect
-                  <select value={bleBus} disabled={beaconConfigLocked} onChange={event => setBleBus(event.target.value)}>
-                    <option value="">Choose a bus…</option>
-                    {eligibleBleBuses.map(bus => <option key={bus.busId} value={bus.busId}>{bus.busName}</option>)}
-                  </select>
-                </label>
+                <div className="decision-state neutral compact">
+                  <span aria-hidden="true">◎</span>
+                  <span><strong>{beaconTargets.length} bus beacon{beaconTargets.length === 1 ? '' : 's'} monitored</strong><small>Matched automatically from the buses serving your stop</small></span>
+                </div>
                 <div className="ble-action-buttons">
                   {bleScan.active ? (
                     <button className="btn secondary" onClick={() => stopBeaconScan()}>
@@ -467,20 +503,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   ) : (
                     <button
                       className="btn primary"
-                      disabled={!bleBus || !beaconConfigValid || Boolean(busyKey)}
+                      disabled={!beaconConfigValid || Boolean(busyKey)}
                       onClick={startBeaconScan}
                     >
-                      Scan for bus beacon
+                      Scan for nearby buses
                     </button>
                   )}
-                  <button
-                    className="btn quiet"
-                    disabled={!bleBus || bleScan.active || Boolean(busyKey)}
-                    onClick={triggerBle}
-                    aria-label="Use the original mock BLE trigger"
-                  >
-                    {busyKey === 'ble' ? <><span className="spinner dark" /> Triggering</> : 'Use mock trigger'}
-                  </button>
                   {backgroundBle.active ? (
                     <button
                       className="btn secondary"
@@ -492,7 +520,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   ) : (
                     <button
                       className="btn secondary"
-                      disabled={!bleBus || !beaconConfigValid || bleScan.active || Boolean(busyKey)}
+                      disabled={!beaconConfigValid || bleScan.active || Boolean(busyKey)}
                       onClick={enableBackgroundBle}
                     >
                       {busyKey === 'ble-background' ? 'Enabling…' : 'Enable closed-app alerts'}
@@ -502,12 +530,18 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
               </div>
 
               <details className="beacon-config" open>
-                <summary>Server-assigned bus beacon</summary>
+                <summary>Server-assigned beacons at your stop</summary>
                 <div className="beacon-fields">
-                  <div className="beacon-passport beacon-uuid">
-                    <span>128-bit service UUID</span>
-                    <code>{selectedBeacon?.serviceUuid?.toUpperCase() || 'Choose a bus to view its UUID'}</code>
-                    {selectedBeacon && <small>Legacy BLE · {selectedBeacon.advertisingIntervalMs} ms · {selectedBeacon.active ? 'Active' : 'Inactive'}</small>}
+                  <div className="beacon-target-list" aria-label="Bus beacon identities monitored at your stop">
+                    {eligibleBleBuses
+                      .filter(bus => bus.beacon?.active !== false && bus.beacon?.serviceUuid)
+                      .map(bus => (
+                        <div className="beacon-passport beacon-uuid" key={bus.busId}>
+                          <span>{bus.busName} · 128-bit service UUID</span>
+                          <code>{bus.beacon.serviceUuid.toUpperCase()}</code>
+                          <small>Legacy BLE · {bus.beacon.advertisingIntervalMs} ms · Active</small>
+                        </div>
+                      ))}
                   </div>
                   <label>Reachable signal (dBm)
                     <input
@@ -522,7 +556,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   </label>
                 </div>
                 <small>
-                  This identity is assigned by the transport server and cannot be changed by a rider. Configure the physical beacon or simulator to advertise this exact service UUID using Legacy BLE; one-time scans stop after 30 seconds. Closed-app alerts trigger only at or above the selected signal threshold.
+                  These identities are assigned by the transport server and cannot be changed by a rider. A detected UUID identifies its bus automatically; one-time scans stop after 30 seconds. Closed-app alerts trigger only at or above the selected signal threshold.
                 </small>
               </details>
 

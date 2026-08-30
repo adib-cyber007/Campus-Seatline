@@ -16,11 +16,11 @@ final class SeatlineBleDetectionClient {
 
     static Response post(
         SecureSessionStore.Session session,
-        SeatlineBeaconConfig config,
+        SeatlineBeaconConfig.Target target,
         SeatlineBeaconReceiver.Detection detection
     ) throws IOException, JSONException {
         URL url = new URL(session.apiOrigin + "/api/rider/ble/detected");
-        byte[] body = body(config, detection).getBytes(StandardCharsets.UTF_8);
+        byte[] body = body(target, detection).getBytes(StandardCharsets.UTF_8);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         try {
             connection.setRequestMethod("POST");
@@ -43,18 +43,18 @@ final class SeatlineBleDetectionClient {
         }
     }
 
-    static String body(SeatlineBeaconConfig config, SeatlineBeaconReceiver.Detection detection)
+    static String body(SeatlineBeaconConfig.Target target, SeatlineBeaconReceiver.Detection detection)
         throws JSONException {
         JSONObject beacon = new JSONObject()
-            .put("format", config.format)
-            .put("uuid", config.uuid)
+            .put("format", target.format)
+            .put("uuid", target.uuid)
             .put("rssi", detection.rssi);
-        if (SeatlineBeaconConfig.FORMAT_IBEACON.equals(config.format)) {
-            beacon.put("major", config.major).put("minor", config.minor);
+        if (SeatlineBeaconConfig.FORMAT_IBEACON.equals(target.format)) {
+            beacon.put("major", target.major).put("minor", target.minor);
         }
         if (detection.txPower != null) beacon.put("txPower", detection.txPower);
         return new JSONObject()
-            .put("busId", config.busId)
+            .put("busId", target.busId)
             .put("beacon", beacon)
             .toString();
     }

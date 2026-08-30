@@ -15,8 +15,10 @@ import android.os.Build;
 
 import androidx.core.content.ContextCompat;
 
-import java.util.Collections;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 final class SeatlineBackgroundBleScanner {
     static final String ACTION_SCAN_RESULT = "edu.campus.seatline.BACKGROUND_BLE_SCAN_RESULT";
@@ -63,16 +65,26 @@ final class SeatlineBackgroundBleScanner {
     }
 
     static List<ScanFilter> filters(SeatlineBeaconConfig config) {
-        if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(config.format)) {
-            return SeatlineBleScannerPlugin.serviceUuidFilters(config.uuid);
+        List<ScanFilter> filters = new ArrayList<>();
+        Set<String> serviceUuids = new HashSet<>();
+        boolean needsIBeaconFilter = false;
+        for (SeatlineBeaconConfig.Target target : config.targets) {
+            if (SeatlineBeaconConfig.FORMAT_SERVICE_UUID.equals(target.format)) {
+                if (serviceUuids.add(target.uuid)) {
+                    filters.addAll(SeatlineBleScannerPlugin.serviceUuidFilters(target.uuid));
+                }
+            } else {
+                needsIBeaconFilter = true;
+            }
         }
-        byte[] prefix = new byte[] { 0x02, 0x15 };
-        byte[] mask = new byte[] { (byte) 0xff, (byte) 0xff };
-        return Collections.singletonList(
-            new ScanFilter.Builder()
+        if (needsIBeaconFilter) {
+            byte[] prefix = new byte[] { 0x02, 0x15 };
+            byte[] mask = new byte[] { (byte) 0xff, (byte) 0xff };
+            filters.add(new ScanFilter.Builder()
                 .setManufacturerData(APPLE_MANUFACTURER_ID, prefix, mask)
-                .build()
-        );
+                .build());
+        }
+        return filters;
     }
 
     static PendingIntent scanIntent(Context context) {

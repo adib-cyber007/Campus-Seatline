@@ -30,18 +30,19 @@ Start with moderate transmitter power and the app's `-75 dBm` reachable-signal t
 ## Simulator acceptance test
 
 1. Configure a second Android phone or BLE tool with Bus A's exact service UUID, Legacy mode, and a 350 ms interval.
-2. Log a rider into the Android app, choose Bus A, and tap **Scan for bus beacon**.
+2. Log a rider whose effective stop is served by Bus A into the Android app, confirm Bus A appears in the monitored list, and tap **Scan for nearby buses**.
 3. Start the advertisement and bring it within the configured RSSI threshold.
 4. Confirm the server returns the canonical Yes/No boarding prompt.
 5. Submit Bus A with Bus B's UUID using the automated smoke test or API test harness; confirm `409 BEACON_BUS_MISMATCH` and no prompt/count change.
 6. Submit a syntactically valid but unassigned UUID; confirm `422 UNKNOWN_BEACON_UUID`.
 7. Answer Yes once for a matched prompt and confirm normal Soft Hold promotion/direct occupancy and duplicate prevention.
 
-The retained **Use mock trigger** does not prove radio detection or UUID matching. It exists only for demonstrations and occupancy-flow testing without hardware.
+The server's retained mock endpoint does not prove radio detection or UUID matching. It exists only for automated occupancy-flow testing without hardware.
 
 ## Operational constraints
 
 - Android 12+ is required for real scanning without location permission.
 - Seatline requests Nearby devices and notifications only; it has no GPS or continuous location tracking.
 - Swiping the app from Recents can leave the registered closed-app scan active. Android Force stop disables receivers until the app is opened again.
+- Foreground and closed-app scans monitor every active bus UUID serving the rider's effective stop; detecting one bus does not suppress a different bus because cooldowns are maintained per bus.
 - A static BLE UUID can be copied or replayed. Phase 2 validates identity-to-bus consistency; it is not cryptographic proof that a transmitter is genuine.

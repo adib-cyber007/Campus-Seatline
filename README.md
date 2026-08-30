@@ -7,7 +7,7 @@ notification-based reports from riders physically present at a stop.
 > **Design constraint honored everywhere:** no GPS, no continuous location tracking of buses or
 > riders — nothing is collected, stored, or displayed. The system only "knows" a bus arrived
 > because riders at that stop confirmed it via a BLE-proximity-triggered prompt. Android supports
-> filtered foreground and closed-app BLE scanning, while the original mock trigger remains available for demos.
+> filtered foreground and closed-app BLE scanning across every bus serving the rider's effective stop.
 
 ## Quick start
 
@@ -33,7 +33,7 @@ locally from aggregated database events, so the new operational demand data is n
 The Android client is a Capacitor shell around the same React application. Build a debug APK
 locally from `client/` with Android SDK 36 and Java 21 installed:
 
-Current release: **1.3.4** on root/client/server and Android `versionName` (`versionCode 9`).
+Current release: **1.3.5** on root/client/server and Android `versionName` (`versionCode 10`).
 
 ```bash
 npm run android:build
@@ -54,9 +54,9 @@ The backend is not embedded in the APK and must be hosted separately. Offline ri
 data-only FCM; BLE prompts are rendered natively with lock-screen Yes/No actions that reuse the
 same authenticated, duplicate-safe response endpoint as the in-app prompt.
 
-For external beacon testing, use an Android 12+ rider phone and a transmitter broadcasting the target bus's server-assigned custom 128-bit BLE service UUID. Each bus receives a unique identity stored in PostgreSQL; Admin and rider screens display it read-only, and `/rider/ble/detected` independently rejects unknown UUIDs or UUIDs mapped to a different submitted bus. Configure the transmitter for Legacy BLE with a 350 ms interval, then choose the bus and tune only the RSSI threshold in Seatline. The app requests Nearby devices only and does not request GPS or location permission.
+For external beacon testing, use an Android 12+ rider phone and transmitters broadcasting each bus's server-assigned custom 128-bit BLE service UUID. Each bus receives a unique identity stored in PostgreSQL; Admin and rider screens display it read-only, and `/rider/ble/detected` independently rejects unknown UUIDs or UUIDs mapped to a different submitted bus. Configure each transmitter for Legacy BLE with a 350 ms interval, then tune only the RSSI threshold in Seatline. The rider never selects a bus: the app monitors all active UUIDs serving their effective stop and derives the matching bus from the detected UUID. The app requests Nearby devices only and does not request GPS or location permission.
 
-A one-time scan runs for 30 seconds in the foreground. **Enable closed-app alerts** registers a filtered low-power Android scan that can wake the app process for the matching service UUID and submit the authenticated detection. Release 1.3.4 renders the canonical server prompt locally; FCM remains a redundant delivery path and updates the same notification ID. The original **Use mock trigger** remains for occupancy-flow demonstrations without hardware, but it does not test UUID mapping. See `docs/bus-beacon-deployment.md` and `docs/android-external-ibeacon-test.md`.
+A one-time scan runs for 30 seconds in the foreground across all eligible bus UUIDs. **Enable closed-app alerts** registers filtered low-power Android scans that can wake the app process for any bus serving the rider's effective stop and submit the authenticated detection. Release 1.3.5 renders the canonical server prompt locally; FCM remains a redundant delivery path and updates the same notification ID. Background targets resynchronize when the rider's effective stop or linked buses change. The server-only mock endpoint remains available for automated occupancy-flow tests, but it does not test UUID mapping. See `docs/bus-beacon-deployment.md` and `docs/android-external-ibeacon-test.md`.
 
 Verify the backend core loop any time with:
 
@@ -119,7 +119,7 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 
 | Concern          | MVP implementation                                            | Production would need                     |
 | ---------------- | ------------------------------------------------------------- | ----------------------------------------- |
-| BLE proximity    | **Mocked** — manual "Trigger detection" button per rider       | Real beacons on buses + scanner integration (see below) |
+| BLE proximity    | Native Android foreground + closed-app scans for every bus at the rider's effective stop; server mock retained for tests | Deploy and maintain physical beacons per bus |
 | Notifications    | Socket.IO in-app + offline Android FCM with native Yes/No actions | Configure Firebase credentials and production monitoring |
 | Real-time sync   | Socket.IO (real)                                               | same, or Firestore streams                |
 | Auth             | JWT with roles (rider/admin; Incharge = granted authority), scrypt hashes | Firebase Auth / hardened JWT rotation |
@@ -129,12 +129,12 @@ Seed topology: `Shuttle-01` (40 seats): Main Gate → Library Block → Hostel C
 
 All detection flows through one seam: [`server/src/services/bleGateway.js`](server/src/services/bleGateway.js).
 
-- The mock UI calls `POST /api/rider/ble/simulate`, which calls `submitDetection({ userId, busId, stopId })`.
+- Automated tests can call `POST /api/rider/ble/simulate`, which calls `submitDetection({ userId, busId, stopId })`.
 - `app.js` registers the production handler once via `onDetection(handleDetection)`.
-- A real deployment replaces the simulate call with an actual scanner (Web Bluetooth PWA, or a
-  React Native shell) that detects the bus beacon and submits the **same event shape** —
-  `{ userId, busId, stopId }`. No other layer changes: prompts, promotion logic, arrival events,
-  broadcasts, and audit all sit downstream of that single entry point.
+- The Android scanner receives every eligible bus UUID from `/rider/overview`, identifies the bus
+  from the matched UUID, and submits it to `/api/rider/ble/detected`. No other layer changes:
+  prompts, promotion logic, arrival events, broadcasts, and audit all sit downstream of the same
+  detection gateway.
 
 ## Architecture
 
@@ -236,8 +236,8 @@ Key domain rules implemented in `services/occupancy.js`:
 
 ## MVP → production checklist
 
-1. Swap the mocked BLE trigger for real hardware scanning (see seam above); deploy beacons per
-   bus and define RSSI/proximity thresholds.
+1. Deploy and maintain a physical beacon per bus, then validate the selected RSSI/proximity
+   threshold across supported Android models.
 2. PostgreSQL persistence is complete; move timers to durable jobs during backend hardening.
 3. Complete Firebase console/signing setup and validate killed-app actions across supported Android devices.
 4. Harden auth (secret rotation, refresh tokens), add rate limiting and input validation layers.
