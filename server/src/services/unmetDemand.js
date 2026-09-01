@@ -1,5 +1,6 @@
 import { getDb, nextId, busByIdIncludingArchived, stopByIdIncludingArchived, userById, todayKey } from '../db.js'
 import { emitAdmins } from '../realtime.js'
+import { sendPushIfUserOffline } from './push.js'
 
 export function recordUnmetDemand({ userId, stopId, busId, channel, alternateBusIds = [] }) {
   const event = {
@@ -15,6 +16,22 @@ export function recordUnmetDemand({ userId, stopId, busId, channel, alternateBus
   }
   getDb().unmetDemandEvents.push(event)
   emitAdmins('refresh', { reason: 'unmet-demand-recorded' })
+  const busName = busByIdIncludingArchived(busId)?.name || 'the selected bus'
+  const stopName = stopByIdIncludingArchived(stopId)?.name || 'your stop'
+  const alternativeNote = event.hadAlternateBus
+    ? 'Another bus option currently has seats.'
+    : 'No alternate bus with available seats is currently shown.'
+  void sendPushIfUserOffline({
+    userId,
+    title: `Seat unavailable on ${busName}`,
+    body: `${busName} could not accept your report at ${stopName}. ${alternativeNote}`,
+    data: {
+      event_type: 'unmet_demand_alert',
+      event_id: event.id,
+      bus_id: busId,
+      stop_id: stopId
+    }
+  })
   return event
 }
 

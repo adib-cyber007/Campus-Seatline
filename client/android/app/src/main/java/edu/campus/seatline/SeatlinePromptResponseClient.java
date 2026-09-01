@@ -16,8 +16,24 @@ final class SeatlinePromptResponseClient {
         String eventId,
         String answer
     ) throws IOException {
-        URL url = new URL(responseUrl(session.apiOrigin, eventId));
-        byte[] body = responseBody(answer).getBytes(StandardCharsets.UTF_8);
+        return postJson(session, responseUrl(session.apiOrigin, eventId), responseBody(answer));
+    }
+
+    static Response postSoftHold(
+        SecureSessionStore.Session session,
+        String busId,
+        String answer
+    ) throws IOException {
+        return postJson(session, softHoldUrl(session.apiOrigin, answer), softHoldBody(busId, answer));
+    }
+
+    private static Response postJson(
+        SecureSessionStore.Session session,
+        String targetUrl,
+        String jsonBody
+    ) throws IOException {
+        URL url = new URL(targetUrl);
+        byte[] body = jsonBody.getBytes(StandardCharsets.UTF_8);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         try {
             connection.setRequestMethod("POST");
@@ -55,6 +71,29 @@ final class SeatlinePromptResponseClient {
             throw new IllegalArgumentException("Answer must be yes or no");
         }
         return "{\"response\":\"" + answer + "\"}";
+    }
+
+    static String softHoldUrl(String apiOrigin, String answer) {
+        validateAnswer(answer);
+        return apiOrigin + ("yes".equals(answer)
+            ? "/api/rider/soft-hold"
+            : "/api/rider/soft-hold/release");
+    }
+
+    static String softHoldBody(String busId, String answer) {
+        validateAnswer(answer);
+        if (busId == null || busId.trim().isEmpty()) {
+            throw new IllegalArgumentException("Bus ID is required");
+        }
+        return "yes".equals(answer)
+            ? "{\"busId\":\"" + busId + "\",\"response\":\"yes\"}"
+            : "{\"busId\":\"" + busId + "\"}";
+    }
+
+    private static void validateAnswer(String answer) {
+        if (!"yes".equals(answer) && !"no".equals(answer)) {
+            throw new IllegalArgumentException("Answer must be yes or no");
+        }
     }
 
     private static void consume(InputStream stream) throws IOException {

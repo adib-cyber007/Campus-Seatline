@@ -26,13 +26,15 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
         if (!ACTION_RESPOND.equals(intent.getAction())) return;
 
         String answer = intent.getStringExtra("answer");
+        String eventType = intent.getStringExtra("event_type");
         String eventId = intent.getStringExtra("event_id");
+        String busId = intent.getStringExtra("bus_id");
         String riderId = intent.getStringExtra("rider_id");
         int notificationId = intent.getIntExtra("notification_id", 0);
         SecureSessionStore.Session session = SecureSessionStore.load(context);
         if (session == null
             || !session.matchesUser(riderId)
-            || eventId == null
+            || !isValidTarget(eventType, eventId, busId)
             || (!"yes".equals(answer) && !"no".equals(answer))) {
             return;
         }
@@ -41,9 +43,11 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
         PendingResult pendingResult = goAsync();
         NETWORK_EXECUTOR.execute(() -> {
             try {
-                SeatlinePromptResponseClient.Response response =
-                    SeatlinePromptResponseClient.post(session, eventId, answer);
-                showOutcome(context, answer, response);
+                boolean softHoldAction = "soft_hold_prompt".equals(eventType);
+                SeatlinePromptResponseClient.Response response = softHoldAction
+                    ? SeatlinePromptResponseClient.postSoftHold(session, busId, answer)
+                    : SeatlinePromptResponseClient.post(session, eventId, answer);
+                showOutcome(context, eventType, answer, response);
             } catch (IOException | RuntimeException error) {
                 showFailure(context);
             } finally {
@@ -54,12 +58,17 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
 
     private static void showOutcome(
         Context context,
+        String eventType,
         String answer,
         SeatlinePromptResponseClient.Response response
     ) {
+        boolean softHoldAction = "soft_hold_prompt".equals(eventType);
         if (response.isRecorded()) {
-            showResult(context, "Response recorded", "Boarding response: " + displayAnswer(answer));
-            if ("yes".equals(answer)) {
+            String result = softHoldAction
+                ? ("yes".equals(answer) ? "Your Soft Hold remains active." : "Your Soft Hold was released.")
+                : "Boarding response: " + displayAnswer(answer);
+            showResult(context, "Response recorded", result);
+            if (!softHoldAction && "yes".equals(answer)) {
                 SeatlineBackgroundBleScanner.stop(context);
                 SeatlineBeaconConfig.disable(context);
             }
@@ -72,6 +81,16 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
         } else {
             showFailure(context);
         }
+    }
+
+    static boolean isValidTarget(String eventType, String eventId, String busId) {
+        if ("ble_confirmation_prompt".equals(eventType)) {
+            return eventId != null && !eventId.trim().isEmpty();
+        }
+        if ("soft_hold_prompt".equals(eventType)) {
+            return busId != null && !busId.trim().isEmpty();
+        }
+        return false;
     }
 
     private static void showFailure(Context context) {
@@ -104,8 +123,9 @@ public class SeatlineNotificationActionReceiver extends BroadcastReceiver {
             .setSmallIcon(R.drawable.ic_stat_bus)
             .setContentTitle(title)
             .setContentText(body)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setContentIntent(contentIntent);
         NotificationManagerCompat.from(context).notify(

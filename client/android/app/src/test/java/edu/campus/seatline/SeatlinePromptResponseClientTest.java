@@ -34,4 +34,24 @@ public class SeatlinePromptResponseClientTest {
             new SeatlinePromptResponseClient.Response(409);
         assertTrue(response.isAlreadyHandled());
     }
+
+    @Test
+    public void softHoldActionsUseTheExistingValidatedRiderEndpoints() {
+        assertEquals(
+            "https://seatline.example.edu/api/rider/soft-hold",
+            SeatlinePromptResponseClient.softHoldUrl("https://seatline.example.edu", "yes")
+        );
+        assertEquals(
+            "{\"busId\":\"bus-1\",\"response\":\"yes\"}",
+            SeatlinePromptResponseClient.softHoldBody("bus-1", "yes")
+        );
+        assertEquals(
+            "https://seatline.example.edu/api/rider/soft-hold/release",
+            SeatlinePromptResponseClient.softHoldUrl("https://seatline.example.edu", "no")
+        );
+        assertEquals(
+            "{\"busId\":\"bus-1\"}",
+            SeatlinePromptResponseClient.softHoldBody("bus-1", "no")
+        );
+    }
 }

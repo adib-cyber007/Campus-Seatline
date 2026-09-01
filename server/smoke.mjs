@@ -852,7 +852,8 @@ async function main() {
   check('crossing and occupancy changes refresh every connected client and the Admin audit',
     realtimeEvents.slice(inferenceEventStart).some(event => event.room === 'all' && event.event === 'refresh') &&
     inferenceOverview.audit.some(item =>
-      item.kind === 'arrival' && item.outcome === 'inferred_crossed' && item.stopId === inferredStopB.data.stop.id))
+      item.kind === 'arrival_event' && item.outcome === 'inferred_crossed' &&
+      item.detail.includes('Inference Gate B')))
 
   console.log('FEATURE: Android FCM device-token lifecycle and offline fallback')
 
@@ -923,6 +924,40 @@ async function main() {
   }, { transport: successfulTransport })
   check('an offline rider receives the FCM fallback once',
     offlineDelivery.sent === 1 && transportCalls === 1)
+
+  let softHoldPushMessage = null
+  const softHoldDelivery = await sendPushIfUserOffline({
+    userId: login.data.user.id,
+    title: 'Soft Hold test', body: 'Are you travelling?',
+    data: { event_type: 'soft_hold_prompt', event_id: 'hold-test-id', bus_id: bus1.busId, stop_id: bus1.stopIds[0] }
+  }, {
+    transport: async message => {
+      softHoldPushMessage = message
+      return { successCount: 1, failureCount: 0, responses: [{ success: true }] }
+    }
+  })
+  check('Soft Hold pushes are data-only, high priority and expose native Yes/No actions',
+    softHoldDelivery.sent === 1 &&
+    softHoldPushMessage?.data.event_type === 'soft_hold_prompt' &&
+    softHoldPushMessage?.data.native_actionable === 'true' &&
+    softHoldPushMessage?.android.priority === 'high' &&
+    !softHoldPushMessage?.notification && !softHoldPushMessage?.android.notification)
+
+  let informationalPushMessage = null
+  await sendPushIfUserOffline({
+    userId: login.data.user.id,
+    title: 'Demand update', body: 'No seat is currently available.',
+    data: { event_type: 'unmet_demand_alert', event_id: 'demand-test-id', bus_id: bus1.busId, stop_id: bus1.stopIds[0] }
+  }, {
+    transport: async message => {
+      informationalPushMessage = message
+      return { successCount: 1, failureCount: 0, responses: [{ success: true }] }
+    }
+  })
+  check('non-actionable arrival/demand updates retain killed-app high-priority delivery',
+    informationalPushMessage?.data.event_type === 'unmet_demand_alert' &&
+    informationalPushMessage?.data.native_actionable === 'false' &&
+    informationalPushMessage?.android.priority === 'high')
 
   await sendPushIfUserOffline({
     userId: login.data.user.id,

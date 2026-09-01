@@ -65,7 +65,7 @@ export async function sendPushToUser({ userId, title, body, data }, { transport 
       title,
       body,
       channel_id: 'seatline-prompts',
-      native_actionable: data?.event_type === 'ble_confirmation_prompt'
+      native_actionable: ['ble_confirmation_prompt', 'soft_hold_prompt'].includes(data?.event_type)
     }),
     android: {
       priority: 'high'

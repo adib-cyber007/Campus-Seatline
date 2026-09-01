@@ -23,6 +23,7 @@ import java.util.Map;
 public class SeatlineMessagingService extends FirebaseMessagingService {
     static final String CHANNEL_ID = "seatline-prompts";
     private static final String BLE_PROMPT = "ble_confirmation_prompt";
+    private static final String SOFT_HOLD_PROMPT = "soft_hold_prompt";
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
@@ -67,10 +68,13 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
             .setAutoCancel(true)
             .setContentIntent(contentIntent(context, data, messageId, notificationId));
 
-        boolean actionable = BLE_PROMPT.equals(eventType)
+        boolean actionableType = BLE_PROMPT.equals(eventType) || SOFT_HOLD_PROMPT.equals(eventType);
+        boolean hasActionTarget = BLE_PROMPT.equals(eventType)
+            ? eventId != null && !eventId.trim().isEmpty()
+            : data.get("bus_id") != null && !data.get("bus_id").trim().isEmpty();
+        boolean actionable = actionableType
             && "true".equals(data.get("native_actionable"))
-            && eventId != null
-            && !eventId.trim().isEmpty();
+            && hasActionTarget;
         if (actionable) {
             builder.addAction(0, "Yes", responseIntent(context, data, "yes", notificationId))
                 .addAction(0, "No", responseIntent(context, data, "no", notificationId));
@@ -108,7 +112,9 @@ public class SeatlineMessagingService extends FirebaseMessagingService {
         Intent intent = new Intent(context, SeatlineNotificationActionReceiver.class)
             .setAction(SeatlineNotificationActionReceiver.ACTION_RESPOND)
             .putExtra("answer", answer)
+            .putExtra("event_type", data.get("event_type"))
             .putExtra("event_id", data.get("event_id"))
+            .putExtra("bus_id", data.get("bus_id"))
             .putExtra("rider_id", data.get("rider_id"))
             .putExtra("notification_id", notificationId);
         int requestCode = positiveHash(data.get("event_id") + ":" + answer);
