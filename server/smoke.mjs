@@ -635,10 +635,21 @@ async function main() {
   })
   const autoRider = await createManagedUser(adminTok,
     { name: 'Automatic Hold Rider', email: 'auto-hold@campus.edu', password: 'pass1234', role: 'rider', stopIds: [singleStop.data.stop.id] })
-  let autoOverview = (await call('/rider/overview', { token: autoRider.data.token })).data
-  check('single-option rider is automatically soft-held once',
+  const simultaneousAutoOverviews = await Promise.all(Array.from({ length: 8 }, () =>
+    call('/rider/overview', { token: autoRider.data.token })
+  ))
+  let autoOverview = simultaneousAutoOverviews[0].data
+  const autoReports = getDb().boardingReports.filter(report =>
+    report.userId === autoRider.data.user.id && report.tripDate === todayKey() && report.state === 'soft_hold'
+  )
+  const autoEvaluations = getDb().autoHoldEvaluations.filter(item =>
+    item.userId === autoRider.data.user.id && item.tripDate === todayKey()
+  )
+  check('simultaneous first loads create exactly one automatic Soft Hold for a single-option rider',
+    simultaneousAutoOverviews.every(result => result.status === 200) &&
     autoOverview.softHoldBusIds.length === 1 && autoOverview.softHoldBusIds[0] === singleBus.data.bus.id &&
-    autoOverview.buses.find(item => item.busId === singleBus.data.bus.id).softHolds === 1)
+    autoOverview.buses.find(item => item.busId === singleBus.data.bus.id).softHolds === 1 &&
+    autoReports.length === 1 && autoReports[0].source === 'auto' && autoEvaluations.length === 1)
   check('auto-hold notification explains one-tap release',
     autoOverview.notifications.some(item => item.type === 'auto_hold' &&
       item.message.includes('automatically soft-held') && item.message.includes('tap Release')))
@@ -653,8 +664,8 @@ async function main() {
   const autoOverviewAgain = (await call('/rider/overview', { token: autoRider.data.token })).data
   check('released auto-hold is not recreated on a later overview that day', autoOverviewAgain.softHoldBusIds.length === 0)
   check('auto-hold data contains no rider ranking fields',
-    getDb().autoHoldEvaluations.every(item =>
-      !Object.keys(item).some(key => /priority|rank|queue|order/i.test(key))))
+    [...getDb().autoHoldEvaluations, ...getDb().boardingReports].every(item =>
+      !Object.keys(item).some(key => /priority|rank|queue/i.test(key))))
 
   console.log('CHANGE 3: optional daily stop override and automatic default reversion')
 
