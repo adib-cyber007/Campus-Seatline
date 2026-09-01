@@ -127,7 +127,7 @@ final class SeatlineBeaconConfig {
         StringBuilder value = new StringBuilder();
         for (Target target : sorted) {
             if (value.length() > 0) value.append('|');
-            value.append(target.busId).append(':').append(target.uuid.toLowerCase(Locale.ROOT));
+            value.append(target.busId);
         }
         return value.toString();
     }
@@ -193,7 +193,11 @@ final class SeatlineBeaconConfig {
             }
             this.busId = busId.trim();
             this.format = normalizedFormat;
-            this.uuid = UUID.fromString(uuid == null ? "" : uuid.trim()).toString();
+            String uuidValue = uuid == null ? "" : uuid.trim();
+            if (uuidValue.isEmpty() && FORMAT_SERVICE_UUID.equals(normalizedFormat)) {
+                uuidValue = SeatlineBeaconIdentity.serviceUuidForBusId(this.busId);
+            }
+            this.uuid = UUID.fromString(uuidValue).toString();
             this.major = major;
             this.minor = minor;
         }

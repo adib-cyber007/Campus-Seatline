@@ -66,12 +66,21 @@ router.get('/overview', (req, res) => {
     .filter((b, i, arr) => arr.findIndex(x => x.id === b.id) === i)
     .map(b => {
       const snap = snapshot().find(s => s.busId === b.id)
+      const lastDetection = db.prompts
+        .filter(prompt => prompt.userId === user.id && prompt.busId === b.id && prompt.detectionSource !== 'mock')
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
       return {
         ...snap,
         stopIds: b.stopIds,
         stopNames: b.stopIds.map(id => stopById(id)?.name || id),
         passedStopIds: passedStopIdsFor(b.id),
-        beacon: b.beacon,
+        bleEligible: b.beacon?.active !== false,
+        ...(authorityBusIds.includes(b.id) ? {
+          bleDiagnostic: {
+            lastDetectedAt: lastDetection?.createdAt || null,
+            lastDetectionStatus: lastDetection?.status || 'not_detected'
+          }
+        } : {}),
         inchargeAuthority: authorityBusIds.includes(b.id)
       }
     })
@@ -197,10 +206,9 @@ function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) 
   if (requireBeacon && !beacon) {
     return res.status(400).json({ error: 'A valid server-assigned custom BLE service UUID is required' })
   }
-  const bus = busById(busId)
-  if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  let mappedBus = null
   if (requireBeacon) {
-    const mappedBus = getDb().buses.find(candidate =>
+    mappedBus = getDb().buses.find(candidate =>
       candidate.beacon?.active && candidate.beacon.serviceUuid === beacon.uuid)
     if (!mappedBus) {
       return res.status(422).json({
@@ -208,13 +216,15 @@ function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) 
         code: 'UNKNOWN_BEACON_UUID'
       })
     }
-    if (mappedBus.id !== bus.id) {
+    if (busId && mappedBus.id !== busId) {
       return res.status(409).json({
-        error: `Beacon identity belongs to ${mappedBus.name}, not ${bus.name}`,
+        error: `Beacon identity belongs to ${mappedBus.name}, not ${busById(busId)?.name || 'the submitted bus'}`,
         code: 'BEACON_BUS_MISMATCH'
       })
     }
   }
+  const bus = requireBeacon ? mappedBus : busById(busId)
+  if (!bus) return res.status(404).json({ error: 'Bus not found' })
   const candidates = effectiveStopIdsForUser(req.user).filter(s => bus.stopIds.includes(s))
   if (candidates.length === 0) {
     return res.status(403).json({ error: 'Bus does not pass your effective stop today' })

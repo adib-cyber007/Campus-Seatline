@@ -11,10 +11,9 @@ export function supportsNativeBeaconScan() {
 function nativeBeaconTargets(beacons = []) {
   return beacons
     .map(beacon => ({
-      busId: String(beacon?.busId || '').trim(),
-      uuid: String(beacon?.uuid || '').trim()
+      busId: String(beacon?.busId || '').trim()
     }))
-    .filter(beacon => beacon.busId && beacon.uuid)
+    .filter(beacon => beacon.busId)
 }
 
 export async function startServiceUuidScan({ beacons, minRssi = DEFAULT_BEACON_MIN_RSSI, timeoutMs = 30000, onDetected, onState }) {

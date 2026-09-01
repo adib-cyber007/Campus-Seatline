@@ -585,6 +585,14 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .beacon-scan-status span { color: var(--muted); }
 .beacon-scan-status.active { color: var(--brand-deep); font-weight: 700; }
 .beacon-scan-status.active span { color: var(--brand); animation: pulse 1.2s infinite; }
+.ble-diagnostic { margin: 12px 0; padding: 11px 12px; display: flex; align-items: center; gap: 10px; border: 1px solid #d8cef0; border-radius: 10px; background: var(--authority-soft); color: var(--authority); }
+.ble-diagnostic > span:first-child { font-size: .8rem; }
+.ble-diagnostic strong, .ble-diagnostic small { display: block; }
+.ble-diagnostic strong { font-size: .73rem; }
+.ble-diagnostic small { margin-top: 2px; color: var(--muted); font-size: .67rem; }
+.admin-beacon-tester > .form-grid, .admin-beacon-tester > .admin-beacon, .admin-beacon-tester > .beacon-scan-status { margin-left: 22px; margin-right: 22px; }
+.admin-beacon-tester > .form-grid { margin-top: 18px; }
+.admin-beacon-tester > .beacon-scan-status { margin-bottom: 20px; }
 .notifications-card { padding: 0; overflow: hidden; }
 .notifications-card summary { min-height: 72px; padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; list-style: none; }
 .notifications-card summary::-webkit-details-marker { display: none; }

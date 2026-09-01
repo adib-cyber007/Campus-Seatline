@@ -52,13 +52,13 @@ function availabilityState(available, capacity) {
 
 function activeBeaconTargets(buses = []) {
   return buses
-    .filter(bus => bus.beacon?.active !== false && bus.beacon?.serviceUuid)
-    .map(bus => ({ busId: bus.busId, uuid: bus.beacon.serviceUuid }))
+    .filter(bus => bus.bleEligible)
+    .map(bus => ({ busId: bus.busId }))
 }
 
 function beaconTargetSignature(targets = []) {
   return targets
-    .map(target => `${target.busId}:${String(target.uuid).toLowerCase()}`)
+    .map(target => target.busId)
     .sort()
     .join('|')
 }
@@ -144,6 +144,12 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
             <span className="audit-note"><span aria-hidden="true">●</span> Audit logged</span>
           </div>
           <p>Use this only when the live count needs a physical correction. Seats Occupied is recalculated automatically.</p>
+          <div className="ble-diagnostic" role="status">
+            <span aria-hidden="true">◉</span>
+            <span><strong>BLE signal diagnostic</strong><small>{bus.bleDiagnostic?.lastDetectedAt
+              ? `Last detected ${relativeAge(bus.bleDiagnostic.lastDetectedAt)} · ${bus.bleDiagnostic.lastDetectionStatus}`
+              : 'No bus signal detected for this trip yet'}</small></span>
+          </div>
           <div className="availability-editor">
             <label>
               Seats Available
@@ -174,6 +180,13 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       )}
     </article>
   )
+}
+
+function relativeAge(timestamp) {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(timestamp).getTime()) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`
+  return `${Math.floor(seconds / 3600)}h ago`
 }
 
 export default function RiderPage({ user, toast, occupancy, prompts, notifications, refreshTick, connectionStatus }) {
@@ -482,9 +495,9 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
         <div className="card ble-card">
           <div className="utility-icon signal" aria-hidden="true"><span /><span /><span /></div>
           <div className="utility-copy">
-            <span className="eyebrow">External beacon test</span>
+            <span className="eyebrow">BLE proximity</span>
             <h2>Detect bus proximity</h2>
-            <p>Seatline automatically watches every active bus beacon serving your stop, in the foreground or while the app is closed. No bus selection, GPS, or location permission is required.</p>
+            <p>Seatline watches the buses serving your stop in the foreground or while the app is closed. Beacon identities stay private to transport Admins; no bus selection, GPS, or location permission is required.</p>
           </div>
           {eligibleBleBuses.length === 0 ? (
             <div className="decision-state success compact"><span aria-hidden="true">✓</span><span><strong>Boarding already confirmed</strong><small>No further report is needed this trip.</small></span></div>
@@ -529,20 +542,9 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                 </div>
               </div>
 
-              <details className="beacon-config" open>
-                <summary>Server-assigned beacons at your stop</summary>
+              <details className="beacon-config">
+                <summary>Proximity settings</summary>
                 <div className="beacon-fields">
-                  <div className="beacon-target-list" aria-label="Bus beacon identities monitored at your stop">
-                    {eligibleBleBuses
-                      .filter(bus => bus.beacon?.active !== false && bus.beacon?.serviceUuid)
-                      .map(bus => (
-                        <div className="beacon-passport beacon-uuid" key={bus.busId}>
-                          <span>{bus.busName} · 128-bit service UUID</span>
-                          <code>{bus.beacon.serviceUuid.toUpperCase()}</code>
-                          <small>Legacy BLE · {bus.beacon.advertisingIntervalMs} ms · Active</small>
-                        </div>
-                      ))}
-                  </div>
                   <label>Reachable signal (dBm)
                     <input
                       type="number"
@@ -556,7 +558,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   </label>
                 </div>
                 <small>
-                  These identities are assigned by the transport server and cannot be changed by a rider. A detected UUID identifies its bus automatically; one-time scans stop after 30 seconds. Closed-app alerts trigger only at or above the selected signal threshold.
+                  Bus identities are matched privately by the app and transport server. One-time scans stop after 30 seconds. Closed-app alerts trigger only at or above the selected signal threshold.
                 </small>
               </details>
 

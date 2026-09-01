@@ -531,7 +531,22 @@ export function promptsForUser(userId) {
     .filter(p => p.userId === userId && p.tripDate === todayKey() &&
       effectiveStopIds.includes(p.stopId) && p.status === 'pending' && new Date(p.expiresAt).getTime() > now)
     .map(p => ({
-      ...p,
+      id: p.id,
+      userId: p.userId,
+      busId: p.busId,
+      stopId: p.stopId,
+      kind: p.kind,
+      detectionSource: p.detectionSource,
+      status: p.status,
+      tripDate: p.tripDate,
+      createdAt: p.createdAt,
+      expiresAt: p.expiresAt,
+      ...(p.beacon ? {
+        bleDiagnostic: {
+          rssi: p.beacon.rssi,
+          txPower: p.beacon.txPower
+        }
+      } : {}),
       busName: busById(p.busId)?.name || p.busId,
       stopName: stopById(p.stopId)?.name || p.stopId
     }))

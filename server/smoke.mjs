@@ -95,11 +95,19 @@ async function main() {
   check('soft-hold "no" does not cancel or downgrade', b.softHolds === 1)
 
   const otherBus = ov.buses.find(item => item.busId !== bus1.busId)
-  check('each rider-visible bus has a unique server-assigned 128-bit service UUID',
-    Boolean(bus1.beacon?.serviceUuid) && Boolean(otherBus?.beacon?.serviceUuid) &&
-    bus1.beacon.serviceUuid !== otherBus.beacon.serviceUuid &&
-    bus1.beacon.advertisingMode === 'legacy' &&
-    bus1.beacon.advertisingIntervalMs >= 250 && bus1.beacon.advertisingIntervalMs <= 500)
+  let adminTok = await adminLogin()
+  const earlyAdminOverview = (await call('/admin/overview', { token: adminTok })).data
+  const rawBus1 = earlyAdminOverview.buses.find(item => item.id === bus1.busId)
+  const rawOtherBus = earlyAdminOverview.buses.find(item => item.id === otherBus.busId)
+  check('server-assigned 128-bit service UUIDs are visible in Admin data only',
+    Boolean(rawBus1.beacon?.serviceUuid) && Boolean(rawOtherBus.beacon?.serviceUuid) &&
+    rawBus1.beacon.serviceUuid !== rawOtherBus.beacon.serviceUuid &&
+    rawBus1.beacon.advertisingMode === 'legacy')
+  check('Rider overview exposes only BLE eligibility and never a raw bus UUID',
+    bus1.bleEligible === true && otherBus.bleEligible === true &&
+    !JSON.stringify(ov).includes(rawBus1.beacon.serviceUuid) &&
+    !JSON.stringify(ov).includes(rawOtherBus.beacon.serviceUuid) &&
+    !Object.prototype.hasOwnProperty.call(bus1, 'beacon'))
 
   const invalidBeacon = await call('/rider/ble/detected', {
     method: 'POST', token: rider,
@@ -121,7 +129,7 @@ async function main() {
     method: 'POST', token: rider,
     body: {
       busId: bus1.busId,
-      beacon: { format: 'service_uuid', uuid: otherBus.beacon.serviceUuid, rssi: -58 }
+      beacon: { format: 'service_uuid', uuid: rawOtherBus.beacon.serviceUuid, rssi: -58 }
     }
   })
   check('server rejects a beacon UUID submitted for the wrong bus before creating a prompt',
@@ -132,22 +140,22 @@ async function main() {
     method: 'POST',
     token: rider,
     body: {
-      busId: bus1.busId,
-      beacon: { format: 'service_uuid', uuid: bus1.beacon.serviceUuid, rssi: -54 }
+      beacon: { format: 'service_uuid', uuid: rawBus1.beacon.serviceUuid, rssi: -54 }
     }
   })
   check('legitimate matched service UUID creates the canonical BLE prompt',
     externalDetection.status === 200 && externalDetection.data.source === 'service_uuid' &&
-    externalDetection.data.prompts[0].detectionSource === 'service_uuid')
+    externalDetection.data.prompts[0].detectionSource === 'service_uuid' &&
+    externalDetection.data.prompts[0].busId === bus1.busId &&
+    !JSON.stringify(externalDetection.data.prompts[0]).includes(rawBus1.beacon.serviceUuid))
 
   const serviceUuidDetection = await call('/rider/ble/detected', {
     method: 'POST',
     token: rider,
     body: {
-      busId: bus1.busId,
       beacon: {
         format: 'service_uuid',
-        uuid: bus1.beacon.serviceUuid,
+        uuid: rawBus1.beacon.serviceUuid,
         rssi: -54
       }
     }
@@ -203,7 +211,6 @@ async function main() {
   const directBoard = await call('/rider/ble/simulate', { method: 'POST', token: rider2, body: { busId: bus1.busId } })
   const p2 = directBoard.data.prompts[0]
   await call(`/rider/prompts/${p2.id}/respond`, { method: 'POST', token: rider2, body: { response: 'yes' } })
-  let adminTok = await adminLogin()
   let occ = (await call('/admin/overview', { token: adminTok })).data.occupancy.find(o => o.busId === bus1.busId)
   check('direct BLE board without soft hold adds occupied only', occ.seatsOccupied === 2 && occ.softHolds === 0)
   check('baseOccupied tracks rider states', occ.baseOccupied === 2 && occ.manualAdjustment === 0)
@@ -216,6 +223,16 @@ async function main() {
   const incOv = (await call('/rider/overview', { token: incharge })).data
   check('authority resolved via assignment (bus scope)', incOv.authorityBusIds.includes(bus1.busId))
   check('authority bus visible with controls flag', incOv.buses.find(x => x.busId === bus1.busId)?.inchargeAuthority === true)
+  const inchargeDetection = await call('/rider/ble/detected', {
+    method: 'POST', token: incharge,
+    body: { beacon: { format: 'service_uuid', uuid: rawBus1.beacon.serviceUuid, rssi: -61 } }
+  })
+  const inchargeAfterDetection = (await call('/rider/overview', { token: incharge })).data
+  const inchargeDiagnosticBus = inchargeAfterDetection.buses.find(item => item.busId === bus1.busId)
+  check('Incharge receives a useful BLE recency diagnostic with no raw UUID',
+    inchargeDetection.status === 200 && Boolean(inchargeDiagnosticBus.bleDiagnostic?.lastDetectedAt) &&
+    inchargeDiagnosticBus.bleDiagnostic.lastDetectionStatus === 'pending' &&
+    !JSON.stringify(inchargeAfterDetection).includes(rawBus1.beacon.serviceUuid))
 
   const oldRoleRoute = await call('/incharge/overview', { token: incharge })
   check('separate incharge login surface removed', oldRoleRoute.status === 401 || oldRoleRoute.status === 403 || oldRoleRoute.status === 404)

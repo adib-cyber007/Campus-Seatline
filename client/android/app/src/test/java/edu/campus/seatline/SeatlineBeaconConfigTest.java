@@ -34,10 +34,19 @@ public class SeatlineBeaconConfigTest {
         SeatlineBeaconConfig second = new SeatlineBeaconConfig(true, Arrays.asList(busA, busB), -75);
 
         assertEquals(
-            "bus-a:7a4c1000-0000-4000-8000-000000000001|bus-b:7a4c1000-0000-4000-8000-000000000002",
+            "bus-a|bus-b",
             first.targetSignature()
         );
         assertEquals(first.targetSignature(), second.targetSignature());
         assertEquals(2, first.targets.size());
+    }
+
+    @Test
+    public void serviceUuidIsDerivedInsideNativeCodeWithoutWebViewDisclosure() {
+        SeatlineBeaconConfig.Target target = new SeatlineBeaconConfig.Target(
+            "bus-a", "service_uuid", "", -1, -1
+        );
+        assertEquals("e4120669-f11c-5ae8-a868-2b5b70bd5637", target.uuid);
+        assertEquals(target.uuid, SeatlineBeaconIdentity.serviceUuidForBusId("bus-a"));
     }
 }

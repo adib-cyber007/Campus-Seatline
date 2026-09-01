@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
+import { DEFAULT_BEACON_MIN_RSSI, startServiceUuidScan, supportsNativeBeaconScan } from '../bleScanner'
 
 const STOP_PAGE_SIZE = 8
 const localDateKey = () => {
@@ -367,12 +368,75 @@ function BeaconPassport({ beacon }) {
     </div>
   )
 }
+
+function AdminBeaconTester({ buses, toast }) {
+  const [busId, setBusId] = useState('')
+  const [controller, setController] = useState(null)
+  const [message, setMessage] = useState('Choose one bus to verify its configured transmitter.')
+  const selected = buses.find(bus => bus.id === busId)
+
+  const stop = async (nextMessage = 'Beacon test stopped') => {
+    await controller?.stop()
+    setController(null)
+    setMessage(nextMessage)
+  }
+  const start = async () => {
+    if (!selected || controller) return
+    if (!supportsNativeBeaconScan()) {
+      toast('Admin beacon testing is available in the Android APK', 'info')
+      return
+    }
+    setMessage(`Scanning for ${selected.name}…`)
+    try {
+      let nextController
+      nextController = await startServiceUuidScan({
+        beacons: [{ busId: selected.id }],
+        minRssi: DEFAULT_BEACON_MIN_RSSI,
+        timeoutMs: 30000,
+        onDetected: detection => {
+          setMessage(`${selected.name} detected at RSSI ${detection.rssi} dBm`)
+          toast(`${selected.name} beacon detected`, 'feedback')
+          void nextController?.dispose()
+          setController(null)
+        },
+        onState: event => {
+          if (event.state === 'timed_out') {
+            setMessage(`${selected.name} was not detected within 30 seconds`)
+            void nextController?.dispose()
+            setController(null)
+          }
+        }
+      })
+      setController(nextController)
+    } catch (error) {
+      setMessage(error.message)
+      toast(error.message, 'error')
+    }
+  }
+
+  return (
+    <section className="card wide admin-section admin-beacon-tester">
+      <SectionHeading eyebrow="Admin-only hardware check" title="Beacon tester" description="Select the bus represented by the transmitter. Raw identities remain confined to transport Admin views." />
+      <div className="form-grid two">
+        <label className="field-label">Beacon represents<select value={busId} disabled={Boolean(controller)} onChange={event => setBusId(event.target.value)}><option value="">Choose a bus…</option>{buses.map(bus => <option value={bus.id} key={bus.id}>{bus.name}</option>)}</select></label>
+        <div className="row">
+          {controller
+            ? <button className="btn secondary" onClick={() => stop()}>Stop test</button>
+            : <button className="btn primary" disabled={!busId} onClick={start}>Test selected beacon</button>}
+        </div>
+      </div>
+      {selected && <BeaconPassport beacon={selected.beacon} />}
+      <p className="beacon-scan-status" role="status" aria-live="polite"><span aria-hidden="true">○</span>{message}</p>
+    </section>
+  )
+}
 function BusesTab({ data, reload, toast }) {
   const [editingId, setEditingId] = useState(null)
 
   return (
     <>
       <NewBus data={data} reload={reload} toast={toast} />
+      <AdminBeaconTester buses={data.buses} toast={toast} />
       {data.buses.map(b =>
         editingId === b.id
           ? <EditBus key={b.id} bus={b} data={data} done={() => { setEditingId(null); reload() }} toast={toast} />
