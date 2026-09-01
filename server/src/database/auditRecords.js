@@ -16,9 +16,17 @@ export function deriveAuditRecords(state) {
   for (const item of state.arrivalEvents) {
     records.push({
       id: item.id, kind: 'arrival_event', actorUserId: item.confirmedByUserIds[0] || null,
-      busId: item.busId, stopId: item.stopId, tripDate: item.tripDate, outcome: 'confirmed',
-      detail: `Bus ${busName(item.busId)} confirmed at Stop ${stopName(item.stopId)}`,
-      metadata: { confirmedByUserIds: item.confirmedByUserIds }, timestamp: item.timestamp
+      busId: item.busId, stopId: item.stopId, tripDate: item.tripDate,
+      outcome: item.inferred ? 'inferred_crossed' : 'confirmed',
+      detail: item.inferred
+        ? `Bus ${busName(item.busId)} inferred past Stop ${stopName(item.stopId)} after confirmation at ${stopName(item.inferredFromStopId)}`
+        : `Bus ${busName(item.busId)} confirmed at Stop ${stopName(item.stopId)}`,
+      metadata: {
+        confirmedByUserIds: item.confirmedByUserIds,
+        inferred: Boolean(item.inferred),
+        inferredFromStopId: item.inferredFromStopId || null
+      },
+      timestamp: item.timestamp
     })
   }
 

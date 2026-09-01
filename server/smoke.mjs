@@ -781,6 +781,79 @@ async function main() {
     localDemandAnswer.answer.includes(`${expectedTopDemandStop.count} rejected report`))
   check('local unmet-demand questions neither call a provider nor mutate data',
     JSON.stringify(getDb()) === beforeLocalDemandQuestion)
+
+  console.log('UPDATE 1: confirmed downstream stops infer prior crossings without changing seat state')
+
+  const inferredStopA = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Inference Gate A', timeline: [], busIds: [] }
+  })
+  const inferredStopB = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Inference Gate B', timeline: [], busIds: [] }
+  })
+  const inferredStopC = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Inference Gate C', timeline: [], busIds: [] }
+  })
+  const inferenceBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: {
+      name: 'Inference Shuttle', capacity: 8,
+      stopIds: [inferredStopA.data.stop.id, inferredStopB.data.stop.id, inferredStopC.data.stop.id]
+    }
+  })
+  const inferredHoldRider = await call('/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Inference Hold Rider', email: 'inference-hold@campus.edu', password: 'pass1234',
+      role: 'rider', stopIds: [inferredStopB.data.stop.id]
+    }
+  })
+  const downstreamConfirmRider = await call('/auth/register', {
+    method: 'POST',
+    body: {
+      name: 'Downstream Confirm Rider', email: 'inference-confirm@campus.edu', password: 'pass1234',
+      role: 'rider', stopIds: [inferredStopC.data.stop.id]
+    }
+  })
+  await call('/rider/soft-hold', {
+    method: 'POST', token: inferredHoldRider.data.token,
+    body: { busId: inferenceBus.data.bus.id, response: 'yes' }
+  })
+  const inferenceEventStart = realtimeEvents.length
+  const downstreamDetection = await call('/rider/ble/simulate', {
+    method: 'POST', token: downstreamConfirmRider.data.token,
+    body: { busId: inferenceBus.data.bus.id }
+  })
+  const downstreamConfirmation = await call(`/rider/prompts/${downstreamDetection.data.prompts[0].id}/respond`, {
+    method: 'POST', token: downstreamConfirmRider.data.token, body: { response: 'yes' }
+  })
+  const inferenceOverview = (await call('/admin/overview', { token: adminTok })).data
+  const inferenceBusView = inferenceOverview.occupancy.find(item => item.busId === inferenceBus.data.bus.id)
+  const inferenceHoldReport = getDb().boardingReports.find(report =>
+    report.userId === inferredHoldRider.data.user.id && report.busId === inferenceBus.data.bus.id &&
+    report.tripDate === todayKey()
+  )
+  const inferredEvents = getDb().arrivalEvents.filter(event =>
+    event.busId === inferenceBus.data.bus.id && event.tripDate === todayKey() && event.inferred
+  )
+  const inferredDemand = inferenceOverview.unmetDemand.events.find(event =>
+    event.userId === inferredHoldRider.data.user.id && event.busId === inferenceBus.data.bus.id &&
+    event.stopId === inferredStopB.data.stop.id && event.channel === 'inferred_stop_crossing'
+  )
+  check('a BLE confirmation at stop N atomically marks every earlier stop as crossed',
+    downstreamConfirmation.status === 200 &&
+    downstreamConfirmation.data.inferredStopIds.includes(inferredStopA.data.stop.id) &&
+    downstreamConfirmation.data.inferredStopIds.includes(inferredStopB.data.stop.id) &&
+    inferredEvents.length === 2)
+  check('an inferred crossing does not promote or release an unresolved Soft Hold',
+    inferenceHoldReport?.state === 'soft_hold' && inferenceBusView.softHolds === 1 &&
+    inferenceBusView.seatsOccupied === 1)
+  check('an unresolved hold at an inferred crossed stop becomes organized unmet demand',
+    inferredDemand?.hadAlternateBus === false && inferredDemand?.channel === 'inferred_stop_crossing')
+  check('crossing and occupancy changes refresh every connected client and the Admin audit',
+    realtimeEvents.slice(inferenceEventStart).some(event => event.room === 'all' && event.event === 'refresh') &&
+    inferenceOverview.audit.some(item =>
+      item.kind === 'arrival' && item.outcome === 'inferred_crossed' && item.stopId === inferredStopB.data.stop.id))
+
   console.log('FEATURE: Android FCM device-token lifecycle and offline fallback')
 
   const fcmTokenA = 'fcm-test-token-a-12345678901234567890'

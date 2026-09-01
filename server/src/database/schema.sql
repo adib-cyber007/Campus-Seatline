@@ -139,8 +139,12 @@ CREATE TABLE IF NOT EXISTS arrival_events (
   stop_id uuid NOT NULL REFERENCES stops(id) ON DELETE RESTRICT,
   trip_date date NOT NULL,
   timestamp timestamptz NOT NULL,
+  inferred boolean NOT NULL DEFAULT false,
+  inferred_from_stop_id uuid REFERENCES stops(id) ON DELETE RESTRICT,
   UNIQUE (bus_id, stop_id, trip_date)
 );
+ALTER TABLE arrival_events ADD COLUMN IF NOT EXISTS inferred boolean NOT NULL DEFAULT false;
+ALTER TABLE arrival_events ADD COLUMN IF NOT EXISTS inferred_from_stop_id uuid REFERENCES stops(id) ON DELETE RESTRICT;
 CREATE TABLE IF NOT EXISTS arrival_event_confirmations (
   arrival_event_id uuid NOT NULL REFERENCES arrival_events(id) ON DELETE CASCADE,
   user_id uuid NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

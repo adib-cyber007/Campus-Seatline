@@ -83,7 +83,8 @@ export async function loadState(client) {
   }))
   state.arrivalEvents = results.arrival_events.map(row => ({
     id: row.id, busId: row.bus_id, stopId: row.stop_id, tripDate: day(row.trip_date),
-    timestamp: iso(row.timestamp),
+    timestamp: iso(row.timestamp), inferred: Boolean(row.inferred),
+    inferredFromStopId: row.inferred_from_stop_id || null,
     confirmedByUserIds: results.arrival_event_confirmations
       .filter(item => item.arrival_event_id === row.id)
       .sort((a, b) => new Date(a.confirmed_at) - new Date(b.confirmed_at))
@@ -187,8 +188,11 @@ export async function saveState(client, state) {
     item.createdAt, item.expiresAt, item.answeredAt || null
   ]))
   await insertRows(client, `INSERT INTO arrival_events
-    (id,bus_id,stop_id,trip_date,timestamp) VALUES ($1,$2,$3,$4,$5)`,
-    state.arrivalEvents.map(item => [item.id, item.busId, item.stopId, item.tripDate, item.timestamp]))
+    (id,bus_id,stop_id,trip_date,timestamp,inferred,inferred_from_stop_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7)`, state.arrivalEvents.map(item => [
+      item.id, item.busId, item.stopId, item.tripDate, item.timestamp,
+      Boolean(item.inferred), item.inferredFromStopId || null
+    ]))
   await insertRows(client, `INSERT INTO arrival_event_confirmations
     (arrival_event_id,user_id,confirmed_at) VALUES ($1,$2,$3)`, state.arrivalEvents.flatMap(event =>
     event.confirmedByUserIds.map(userId => [event.id, userId, event.timestamp])))

@@ -14,6 +14,7 @@ export { todayKey }
 
 function broadcastAll() {
   emitAll('occupancy', snapshot())
+  emitAll('refresh', { reason: 'occupancy-or-crossing-changed' })
   emitAdmins('audit', auditSnapshot())
 }
 
@@ -127,10 +128,7 @@ function logHoldRelease(userId, released, channel, outcome, message = null) {
 
 function recordCapacityRejection({ user, bus, stopId, channel }) {
   if (!stopId || !stopById(stopId)) return null
-  const counts = new Map(snapshot().map(item => [item.busId, item]))
-  const alternateBusIds = busesForStops(effectiveStopIdsForUser(user))
-    .filter(candidate => candidate.id !== bus.id && (counts.get(candidate.id)?.availableSeats || 0) > 0)
-    .map(candidate => candidate.id)
+  const alternateBusIds = viableAlternateBusIds(effectiveStopIdsForUser(user), bus.id)
   return recordUnmetDemand({
     userId: user.id,
     stopId,
@@ -138,6 +136,59 @@ function recordCapacityRejection({ user, bus, stopId, channel }) {
     channel,
     alternateBusIds
   })
+}
+
+function viableAlternateBusIds(stopIds, excludedBusId) {
+  const counts = new Map(snapshot().map(item => [item.busId, item]))
+  return busesForStops(stopIds)
+    .filter(candidate => candidate.id !== excludedBusId && (counts.get(candidate.id)?.availableSeats || 0) > 0)
+    .map(candidate => candidate.id)
+}
+
+function ensureInferredCrossingDemand(bus, stopId) {
+  const db = getDb()
+  const tripDate = todayKey()
+  const unresolvedHolds = db.boardingReports.filter(report =>
+    report.busId === bus.id && report.stopId === stopId && report.tripDate === tripDate && report.state === 'soft_hold'
+  )
+  for (const report of unresolvedHolds) {
+    const alreadyRecorded = db.unmetDemandEvents.some(event =>
+      event.userId === report.userId && event.busId === bus.id && event.stopId === stopId &&
+      event.tripDate === tripDate && event.channel === 'inferred_stop_crossing'
+    )
+    if (alreadyRecorded) continue
+    recordUnmetDemand({
+      userId: report.userId,
+      stopId,
+      busId: bus.id,
+      channel: 'inferred_stop_crossing',
+      alternateBusIds: viableAlternateBusIds([stopId], bus.id)
+    })
+  }
+}
+
+function inferPriorStopCrossings(bus, confirmedStopId, timestamp) {
+  const db = getDb()
+  const tripDate = todayKey()
+  const confirmedIndex = bus.stopIds.indexOf(confirmedStopId)
+  if (confirmedIndex <= 0) return []
+
+  const inferredStopIds = []
+  for (const stopId of bus.stopIds.slice(0, confirmedIndex)) {
+    let event = db.arrivalEvents.find(item =>
+      item.busId === bus.id && item.stopId === stopId && item.tripDate === tripDate
+    )
+    if (!event) {
+      event = {
+        id: nextId(), busId: bus.id, stopId, tripDate, timestamp,
+        inferred: true, inferredFromStopId: confirmedStopId, confirmedByUserIds: []
+      }
+      db.arrivalEvents.push(event)
+      inferredStopIds.push(stopId)
+    }
+    if (event.inferred) ensureInferredCrossingDemand(bus, stopId)
+  }
+  return inferredStopIds
 }
 export function applySoftHold(user, bus, response, { source = 'manual', stopId: requestedStopId } = {}) {
   const now = new Date().toISOString()
@@ -419,11 +470,20 @@ export function applyBleResponse(user, prompt, response) {
   )
   let arrivalCreated = false
   if (!event) {
-    event = { id: nextId(), busId: bus.id, stopId: stop.id, confirmedByUserIds: [], timestamp: now, tripDate: todayKey() }
+    event = {
+      id: nextId(), busId: bus.id, stopId: stop.id, confirmedByUserIds: [],
+      timestamp: now, tripDate: todayKey(), inferred: false, inferredFromStopId: null
+    }
     db.arrivalEvents.push(event)
+    arrivalCreated = true
+  } else if (event.inferred) {
+    event.inferred = false
+    event.inferredFromStopId = null
+    event.timestamp = now
     arrivalCreated = true
   }
   if (!event.confirmedByUserIds.includes(user.id)) event.confirmedByUserIds.push(user.id)
+  const inferredStopIds = inferPriorStopCrossings(bus, stop.id, now)
 
   const snap = snapshot().find(s => s.busId === bus.id)
   feedback(user.id, `You're now counted as Seats Occupied — ${snap.availableSeats} seats remaining on ${bus.name}.`)
@@ -449,7 +509,7 @@ export function applyBleResponse(user, prompt, response) {
     }
     emitAdmins('arrival', {
       id: event.id, busId: bus.id, busName: bus.name,
-      stopId: stop.id, stopName: stop.name, timestamp: now
+      stopId: stop.id, stopName: stop.name, timestamp: now, inferredStopIds
     })
   }
 
@@ -457,6 +517,7 @@ export function applyBleResponse(user, prompt, response) {
     ok: true,
     promoted,
     arrivalCreated,
+    inferredStopIds,
     transferredFromBusId: transition.released?.busId || null
   })
 }

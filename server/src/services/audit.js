@@ -30,10 +30,17 @@ export function auditSnapshot() {
       id: e.id,
       kind: 'arrival_event',
       timestamp: e.timestamp,
-      actor: e.confirmedByUserIds.map(id => userById(id)?.name || id).join(', ') || 'unknown',
-      detail: `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} confirmed at Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
-        ` (${e.confirmedByUserIds.length} confirmation${e.confirmedByUserIds.length === 1 ? '' : 's'})` +
-        tripLabel(e.tripDate)
+      actor: e.inferred
+        ? 'System inference'
+        : e.confirmedByUserIds.map(id => userById(id)?.name || id).join(', ') || 'unknown',
+      outcome: e.inferred ? 'inferred_crossed' : 'confirmed',
+      detail: e.inferred
+        ? `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} inferred past Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
+          ` after confirmation at ${stopByIdIncludingArchived(e.inferredFromStopId)?.name || e.inferredFromStopId}` +
+          tripLabel(e.tripDate)
+        : `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} confirmed at Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
+          ` (${e.confirmedByUserIds.length} confirmation${e.confirmedByUserIds.length === 1 ? '' : 's'})` +
+          tripLabel(e.tripDate)
     })
   }
 
