@@ -87,6 +87,16 @@ async function requireCall(path, options, status = 200) {
   return response.data
 }
 
+async function provisionUser(adminToken, body) {
+  const created = await requireCall('/admin/users', {
+    method: 'POST', token: adminToken, body
+  }, 201)
+  const login = await requireCall('/auth/login', {
+    method: 'POST', body: { email: body.email, password: body.password }
+  })
+  return { user: created.user, token: login.token }
+}
+
 async function databaseFingerprint() {
   const tables = [
     'users', 'stops', 'buses', 'bus_beacons', 'user_stops', 'bus_stops', 'incharge_assignments',
@@ -131,27 +141,18 @@ async function main() {
     body: { name: 'Persistence Bus B', capacity: 12, stopIds: [stopA.id, stopB.id] }
   }, 201)).bus
 
-  const riderOne = await requireCall('/auth/register', {
-    method: 'POST',
-    body: {
+  const riderOne = await provisionUser(admin.token, {
       name: 'Restart Rider One', email: 'restart-one@campus.edu',
       password: 'pass1234', role: 'rider', stopIds: [stopA.id]
-    }
-  }, 201)
-  const riderTwo = await requireCall('/auth/register', {
-    method: 'POST',
-    body: {
+  })
+  const riderTwo = await provisionUser(admin.token, {
       name: 'Restart Rider Two', email: 'restart-two@campus.edu',
       password: 'pass1234', role: 'rider', stopIds: [stopA.id]
-    }
-  }, 201)
-  const riderThree = await requireCall('/auth/register', {
-    method: 'POST',
-    body: {
+  })
+  const riderThree = await provisionUser(admin.token, {
       name: 'Constraint Rider', email: 'constraint@campus.edu',
       password: 'pass1234', role: 'rider', stopIds: [stopA.id]
-    }
-  }, 201)
+  })
 
   const assignment = (await requireCall('/admin/incharge-assignments', {
     method: 'POST', token: admin.token,

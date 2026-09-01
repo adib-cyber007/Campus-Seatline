@@ -40,6 +40,18 @@ async function call(path, { method = 'GET', token, body } = {}) {
   return { status: res.status, data }
 }
 
+async function createManagedUser(adminToken, body) {
+  const created = await call('/admin/users', { method: 'POST', token: adminToken, body })
+  if (created.status !== 201) return created
+  const login = await call('/auth/login', {
+    method: 'POST', body: { email: body.email.trim().toLowerCase(), password: body.password }
+  })
+  return {
+    status: created.status,
+    data: { user: created.data.user, token: login.data.token }
+  }
+}
+
 const adminLogin = () => call('/auth/login', { method: 'POST', body: { email: 'admin@campus.edu', password: 'admin123' } }).then(r => r.data.token)
 
 async function main() {
@@ -72,6 +84,11 @@ async function main() {
 
   const noAuth = await fetch(`${base}/rider/overview`).then(r => r.status)
   check('unauthenticated request blocked', noAuth === 401)
+  const publicRegistration = await call('/auth/register', {
+    method: 'POST',
+    body: { name: 'Public Signup', email: 'public-signup@campus.edu', password: 'pass1234', role: 'rider', stopIds: [bus1.stopIds[0]] }
+  })
+  check('self-service registration route does not exist', publicRegistration.status === 404)
 
   console.log('FIX 1: one report state per rider/bus/trip')
 
@@ -339,17 +356,15 @@ async function main() {
     attemptedBeaconOverwrite.status === 200 &&
     attemptedBeaconOverwrite.data.bus.beacon.serviceUuid === newBus.data.bus.beacon.serviceUuid)
 
-  const regBad = await call('/auth/register', {
-    method: 'POST',
+  const regBad = await call('/admin/users', {
+    method: 'POST', token: adminTok,
     body: { name: 'X', email: 'x@campus.edu', password: 'pass1234', role: 'incharge', stopIds: [newStop.data.stop.id] }
   })
-  check('registering as incharge role rejected', regBad.status === 400)
+  check('provisioning a separate Incharge role is rejected', regBad.status === 400)
 
-  const reg = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'New Rider', email: 'new@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] }
-  })
-  check('rider registration works', reg.status === 201)
+  const reg = await createManagedUser(adminTok,
+    { name: 'New Rider', email: 'new@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] })
+  check('Admin-provisioned rider account works', reg.status === 201)
   const newRiderOv = (await call('/rider/overview', { token: reg.data.token })).data
   check('new rider auto-resolves bus from stop', newRiderOv.buses.some(b => b.busId === newBus.data.bus.id))
 
@@ -380,10 +395,8 @@ async function main() {
   check('Incharge can derive a full bus while preserving the active Soft Hold',
     fillBus.status === 200 && fillBus.data.override.newOccupied === newBus.data.bus.capacity - 1)
 
-  const reg2 = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Concurrent Rider', email: 'concurrent@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] }
-  })
+  const reg2 = await createManagedUser(adminTok,
+    { name: 'Concurrent Rider', email: 'concurrent@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] })
   const fullHold = await call('/rider/soft-hold', {
     method: 'POST', token: reg2.data.token,
     body: { busId: newBus.data.bus.id, response: 'yes' }
@@ -434,17 +447,17 @@ async function main() {
   check('manual Incharge adjustment resets at trip-day rollover',
     rolled.manualAdjustment === 0 && rolled.tripDate !== '1900-01-01')
 
-  const blankName = await call('/auth/register', {
-    method: 'POST',
+  const blankName = await call('/admin/users', {
+    method: 'POST', token: adminTok,
     body: { name: '   ', email: 'blank@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] }
   })
-  check('registration rejects whitespace-only rider names', blankName.status === 400)
+  check('Admin provisioning rejects whitespace-only rider names', blankName.status === 400)
 
-  const normalized = await call('/auth/register', {
-    method: 'POST',
+  const normalized = await call('/admin/users', {
+    method: 'POST', token: adminTok,
     body: { name: '  Trimmed Rider  ', email: '  TRIMMED@CAMPUS.EDU  ', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] }
   })
-  check('registration normalizes rider name and email',
+  check('Admin provisioning normalizes rider name and email',
     normalized.status === 201 && normalized.data.user.name === 'Trimmed Rider' && normalized.data.user.email === 'trimmed@campus.edu')
 
   console.log('UPDATE 3: Admin-provisioned accounts and dependency-safe retirement')
@@ -539,10 +552,8 @@ async function main() {
     method: 'POST', token: adminTok,
     body: { name: 'Transfer-B', capacity: 12, stopIds: [transferStop.data.stop.id] }
   })
-  const transferRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Transfer Rider', email: 'transfer@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] }
-  })
+  const transferRider = await createManagedUser(adminTok,
+    { name: 'Transfer Rider', email: 'transfer@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] })
   let transferOverview = (await call('/rider/overview', { token: transferRider.data.token })).data
   check('multi-option rider is not auto-held', transferOverview.softHoldBusIds.length === 0)
 
@@ -622,10 +633,8 @@ async function main() {
     method: 'POST', token: adminTok,
     body: { name: 'Only-Option', capacity: 9, stopIds: [singleStop.data.stop.id] }
   })
-  const autoRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Automatic Hold Rider', email: 'auto-hold@campus.edu', password: 'pass1234', role: 'rider', stopIds: [singleStop.data.stop.id] }
-  })
+  const autoRider = await createManagedUser(adminTok,
+    { name: 'Automatic Hold Rider', email: 'auto-hold@campus.edu', password: 'pass1234', role: 'rider', stopIds: [singleStop.data.stop.id] })
   let autoOverview = (await call('/rider/overview', { token: autoRider.data.token })).data
   check('single-option rider is automatically soft-held once',
     autoOverview.softHoldBusIds.length === 1 && autoOverview.softHoldBusIds[0] === singleBus.data.bus.id &&
@@ -649,10 +658,8 @@ async function main() {
 
   console.log('CHANGE 3: optional daily stop override and automatic default reversion')
 
-  const overrideRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Stop Override Rider', email: 'stop-override@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] }
-  })
+  const overrideRider = await createManagedUser(adminTok,
+    { name: 'Stop Override Rider', email: 'stop-override@campus.edu', password: 'pass1234', role: 'rider', stopIds: [transferStop.data.stop.id] })
   const overrideDefault = (await call('/rider/overview', { token: overrideRider.data.token })).data
   check('unused override preserves zero-action default stop context',
     !overrideDefault.dailyStopOverride && overrideDefault.stops[0].id === transferStop.data.stop.id)
@@ -695,15 +702,13 @@ async function main() {
     method: 'POST', token: adminTok,
     body: { name: 'Count Verification Gate', timeline: [], busIds: [] }
   })
-  const countedRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Counted Home Rider', email: 'counted-home@campus.edu', password: 'pass1234', role: 'rider', stopIds: [countStop.data.stop.id] }
-  })
+  const countedRider = await createManagedUser(adminTok,
+    { name: 'Counted Home Rider', email: 'counted-home@campus.edu', password: 'pass1234', role: 'rider', stopIds: [countStop.data.stop.id] })
   let countOverview = (await call('/admin/overview', { token: adminTok })).data
   check('registering a rider increments the derived stop count',
     countOverview.stops.find(stop => stop.id === countStop.data.stop.id).riderCount === 1)
-  check('rider registration emits the existing live Admin refresh signal',
-    realtimeEvents.some(event => event.room === 'role:admin' && event.event === 'refresh' && event.payload.reason === 'rider-registered'))
+  check('Admin rider provisioning emits the existing live refresh signal',
+    realtimeEvents.some(event => event.room === 'all' && event.event === 'refresh' && event.payload.reason === 'user-created'))
 
   const externalCountRiderId = (await call('/me', { token: rider2 })).data.user.id
   const externalStopGrant = await call('/admin/incharge-assignments', {
@@ -748,10 +753,8 @@ async function main() {
   const archiveBus = await call('/admin/buses', {
     method: 'POST', token: adminTok, body: { name: 'Archive-Ready', capacity: 4, stopIds: [archiveBusStop.data.stop.id] }
   })
-  const archiveRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Archive History Rider', email: 'archive-history@campus.edu', password: 'pass1234', role: 'rider', stopIds: [archiveBusStop.data.stop.id] }
-  })
+  const archiveRider = await createManagedUser(adminTok,
+    { name: 'Archive History Rider', email: 'archive-history@campus.edu', password: 'pass1234', role: 'rider', stopIds: [archiveBusStop.data.stop.id] })
   await call('/rider/soft-hold', {
     method: 'POST', token: archiveRider.data.token, body: { busId: archiveBus.data.bus.id, response: 'yes' }
   })
@@ -822,14 +825,10 @@ async function main() {
       method: 'POST', token: incharge, body: { seatsAvailable: 0 }
     })
   }
-  const strandedRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Stranded Demand Rider', email: 'stranded-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [strandedStop.data.stop.id] }
-  })
-  const alternateRider = await call('/auth/register', {
-    method: 'POST',
-    body: { name: 'Alternative Demand Rider', email: 'alternative-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [alternateStop.data.stop.id] }
-  })
+  const strandedRider = await createManagedUser(adminTok,
+    { name: 'Stranded Demand Rider', email: 'stranded-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [strandedStop.data.stop.id] })
+  const alternateRider = await createManagedUser(adminTok,
+    { name: 'Alternative Demand Rider', email: 'alternative-demand@campus.edu', password: 'pass1234', role: 'rider', stopIds: [alternateStop.data.stop.id] })
   const strandedReject = await call('/rider/soft-hold', {
     method: 'POST', token: strandedRider.data.token, body: { busId: fullOnlyBus.data.bus.id, response: 'yes' }
   })
@@ -895,19 +894,13 @@ async function main() {
       stopIds: [inferredStopA.data.stop.id, inferredStopB.data.stop.id, inferredStopC.data.stop.id]
     }
   })
-  const inferredHoldRider = await call('/auth/register', {
-    method: 'POST',
-    body: {
+  const inferredHoldRider = await createManagedUser(adminTok, {
       name: 'Inference Hold Rider', email: 'inference-hold@campus.edu', password: 'pass1234',
       role: 'rider', stopIds: [inferredStopB.data.stop.id]
-    }
   })
-  const downstreamConfirmRider = await call('/auth/register', {
-    method: 'POST',
-    body: {
+  const downstreamConfirmRider = await createManagedUser(adminTok, {
       name: 'Downstream Confirm Rider', email: 'inference-confirm@campus.edu', password: 'pass1234',
       role: 'rider', stopIds: [inferredStopC.data.stop.id]
-    }
   })
   await call('/rider/soft-hold', {
     method: 'POST', token: inferredHoldRider.data.token,

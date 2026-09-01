@@ -196,7 +196,7 @@ Key domain rules implemented in `services/occupancy.js`:
 
 ## API surface (summary)
 
-- `POST /api/auth/login` · `POST /api/auth/register` (rider-only self-registration + stop selection)
+- `POST /api/auth/login` (accounts are provisioned by an Admin; there is no self-registration endpoint)
 - `GET  /api/meta` (public stop list) · `GET /api/me`
 - Rider: `GET /api/rider/overview` · `POST /api/rider/soft-hold` · `POST /api/rider/ble/simulate` ·
   `POST /api/rider/soft-hold/release` · `POST/DELETE /api/rider/daily-stop` ·
