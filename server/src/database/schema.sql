@@ -6,8 +6,14 @@ CREATE TABLE IF NOT EXISTS users (
   email text NOT NULL,
   password_hash text NOT NULL,
   role text NOT NULL CHECK (role IN ('admin', 'rider')),
+  active boolean NOT NULL DEFAULT true,
+  archived_at timestamptz,
+  archived_by_admin_id uuid,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS archived_by_admin_id uuid;
 CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique ON users (lower(email));
 
 CREATE TABLE IF NOT EXISTS stops (

@@ -430,6 +430,84 @@ async function main() {
   check('registration normalizes rider name and email',
     normalized.status === 201 && normalized.data.user.name === 'Trimmed Rider' && normalized.data.user.email === 'trimmed@campus.edu')
 
+  console.log('UPDATE 3: Admin-provisioned accounts and dependency-safe retirement')
+
+  const createdAdmin = await call('/admin/users', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Relief Dispatcher', email: 'relief-admin@campus.edu', password: 'dispatch123', role: 'admin', stopIds: [newStop.data.stop.id] }
+  })
+  const createdAdminLogin = await call('/auth/login', {
+    method: 'POST', body: { email: 'relief-admin@campus.edu', password: 'dispatch123' }
+  })
+  check('Admin can provision another Admin with an initial password and no stop assignment',
+    createdAdmin.status === 201 && createdAdmin.data.user.role === 'admin' &&
+    createdAdmin.data.user.stopIds.length === 0 && !createdAdmin.data.user.passwordHash &&
+    createdAdminLogin.status === 200)
+  const riderCreateDenied = await call('/admin/users', {
+    method: 'POST', token: rider,
+    body: { name: 'Denied User', email: 'denied-user@campus.edu', password: 'pass1234', role: 'rider', stopIds: [newStop.data.stop.id] }
+  })
+  check('Riders and riders with Incharge authority cannot provision accounts', riderCreateDenied.status === 403)
+
+  const managedRider = await call('/admin/users', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Managed Rider', email: 'managed-rider@campus.edu', password: 'managed123', role: 'rider', stopIds: [newStop.data.stop.id] }
+  })
+  const managedAssignment = await call('/admin/incharge-assignments', {
+    method: 'POST', token: adminTok,
+    body: { riderId: managedRider.data.user.id, scopeType: 'stop', stopId: newStop.data.stop.id }
+  })
+  const managedRemoval = await call(`/admin/users/${managedRider.data.user.id}`, {
+    method: 'DELETE', token: adminTok
+  })
+  const managedLoginAfterRemoval = await call('/auth/login', {
+    method: 'POST', body: { email: 'managed-rider@campus.edu', password: 'managed123' }
+  })
+  const afterManagedRemoval = (await call('/admin/overview', { token: adminTok })).data
+  check('retiring a Rider atomically revokes active Incharge authority without dangling access',
+    managedRemoval.status === 200 && managedRemoval.data.archived === true &&
+    managedRemoval.data.revokedAssignmentIds.includes(managedAssignment.data.assignment.id) &&
+    getDb().inchargeAssignments.find(item => item.id === managedAssignment.data.assignment.id)?.revokedAt)
+  check('a retired account cannot log in and disappears from the active identity ledger',
+    managedLoginAfterRemoval.status === 401 &&
+    !afterManagedRemoval.users.some(user => user.id === managedRider.data.user.id))
+  check('retired account identity and authority history remain available in the audit trail',
+    afterManagedRemoval.audit.some(item => item.kind === 'user_archived' && item.detail.includes('Managed Rider')) &&
+    afterManagedRemoval.audit.some(item => item.kind === 'incharge_assignment' && item.detail.includes('Managed Rider') && item.detail.startsWith('Revoked')))
+
+  const protectedStop = await call('/admin/stops', {
+    method: 'POST', token: adminTok, body: { name: 'Protected Account Gate', timeline: [], busIds: [] }
+  })
+  const protectedBus = await call('/admin/buses', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Protected Account Shuttle', capacity: 5, stopIds: [protectedStop.data.stop.id] }
+  })
+  const protectedRider = await call('/admin/users', {
+    method: 'POST', token: adminTok,
+    body: { name: 'Protected Active Rider', email: 'protected-rider@campus.edu', password: 'protected123', role: 'rider', stopIds: [protectedStop.data.stop.id] }
+  })
+  const protectedLogin = await call('/auth/login', {
+    method: 'POST', body: { email: 'protected-rider@campus.edu', password: 'protected123' }
+  })
+  await call('/rider/soft-hold', {
+    method: 'POST', token: protectedLogin.data.token,
+    body: { busId: protectedBus.data.bus.id, response: 'yes' }
+  })
+  const protectedRemoval = await call(`/admin/users/${protectedRider.data.user.id}`, {
+    method: 'DELETE', token: adminTok
+  })
+  check('account removal is blocked with a clear dependency while an active trip report exists',
+    protectedRemoval.status === 409 && protectedRemoval.data.dependencies.activeReports === 1 &&
+    getDb().users.find(user => user.id === protectedRider.data.user.id)?.active !== false)
+  await call('/rider/soft-hold/release', {
+    method: 'POST', token: protectedLogin.data.token, body: { busId: protectedBus.data.bus.id }
+  })
+  const releasedRemoval = await call(`/admin/users/${protectedRider.data.user.id}`, {
+    method: 'DELETE', token: adminTok
+  })
+  check('account can be safely retired after the operational dependency is resolved',
+    releasedRemoval.status === 200 && getDb().users.find(user => user.id === protectedRider.data.user.id)?.active === false)
+
   console.log('CHANGE 1: global Soft Hold transfer and atomic BLE bus switch')
 
   const transferStop = await call('/admin/stops', {

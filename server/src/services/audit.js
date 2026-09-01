@@ -103,5 +103,15 @@ export function auditSnapshot() {
       detail: `Archived ${isBus ? 'Bus' : 'Stop'} ${entity.name}; historical records remain available`
     })
   }
+  for (const user of db.users.filter(item => item.active === false && item.archivedAt)) {
+    items.push({
+      id: `${user.id}-archived`,
+      kind: 'user_archived',
+      timestamp: user.archivedAt,
+      actor: userById(user.archivedByAdminId)?.name || user.archivedByAdminId || 'unknown admin',
+      outcome: 'archived',
+      detail: `Archived ${user.role === 'admin' ? 'Admin' : 'Rider'} account ${user.name}; historical records remain available`
+    })
+  }
   return items.sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
 }

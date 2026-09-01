@@ -27,7 +27,8 @@ export async function loadState(client) {
 
   state.users = results.users.map(row => ({
     id: row.id, name: row.name, email: row.email, passwordHash: row.password_hash,
-    role: row.role,
+    role: row.role, active: row.active,
+    archivedAt: iso(row.archived_at), archivedByAdminId: row.archived_by_admin_id,
     stopIds: results.user_stops.filter(link => link.user_id === row.id)
       .sort((a, b) => a.position - b.position).map(link => link.stop_id)
   }))
@@ -159,8 +160,12 @@ export async function saveState(client, state) {
     return [item.id, item.beacon.serviceUuid, item.beacon.advertisingMode,
       item.beacon.advertisingIntervalMs, item.beacon.active]
   }))
-  await insertRows(client, `INSERT INTO users (id,name,email,password_hash,role) VALUES ($1,$2,$3,$4,$5)`,
-    state.users.map(item => [item.id, item.name, item.email, item.passwordHash, item.role]))
+  await insertRows(client, `INSERT INTO users
+    (id,name,email,password_hash,role,active,archived_at,archived_by_admin_id)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`, state.users.map(item => [
+    item.id, item.name, item.email, item.passwordHash, item.role,
+    item.active !== false, item.archivedAt || null, item.archivedByAdminId || null
+  ]))
   await insertRows(client, `INSERT INTO user_stops (user_id,stop_id,position) VALUES ($1,$2,$3)`,
     state.users.flatMap(user => user.stopIds.map((stopId, position) => [user.id, stopId, position])))
   await insertRows(client, `INSERT INTO bus_stops (bus_id,stop_id,position) VALUES ($1,$2,$3)`,

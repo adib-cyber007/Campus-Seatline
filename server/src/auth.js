@@ -18,7 +18,7 @@ export function authenticate(req, res, next) {
   try {
     const payload = verifyToken(token)
     const user = userById(payload.sub)
-    if (!user) return res.status(401).json({ error: 'Unknown user' })
+    if (!user || user.active === false) return res.status(401).json({ error: 'Unknown or inactive user' })
     req.user = user
     next()
   } catch {

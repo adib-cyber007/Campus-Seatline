@@ -9,7 +9,7 @@ router.post('/login', (req, res) => {
   const { email, password } = req.body || {}
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' })
   const normalizedEmail = String(email).trim().toLowerCase()
-  const user = getDb().users.find(u => u.email.toLowerCase() === normalizedEmail)
+  const user = getDb().users.find(u => u.active !== false && u.email.toLowerCase() === normalizedEmail)
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return res.status(401).json({ error: 'Invalid credentials' })
   }
@@ -34,7 +34,7 @@ router.post('/register', (req, res) => {
   const user = {
     id: nextId(), name: cleanName, email: cleanEmail, role,
     passwordHash: hashPassword(password),
-    stopIds: [...new Set(stopIds)]
+    stopIds: [...new Set(stopIds)], active: true
   }
   db.users.push(user)
   emitAdmins('refresh', { reason: 'rider-registered' })

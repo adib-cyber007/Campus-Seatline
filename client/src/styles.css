@@ -271,6 +271,15 @@ fieldset { min-width: 0; margin: 0; padding: 0; border: 0; }
 .grow { flex: 1; }
 .form-grid { display: grid; gap: 14px; align-items: end; }
 .form-grid.two { grid-template-columns: minmax(0, 2fr) minmax(140px, 1fr); }
+.account-grid { grid-template-columns: 1.25fr 1.4fr 1fr .75fr; align-items: end; }
+.account-create form { padding: 20px 22px 22px; display: grid; gap: 18px; }
+.account-create .form-grid, .account-create .field { margin: 0; }
+.account-stops { padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.account-create-action { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.account-create-action p { margin: 0; color: var(--muted); font-size: .82rem; }
+.account-create-action p span { color: var(--authority); font-weight: 800; }
+.identity-ledger td:first-child strong, .identity-ledger td:first-child small { display: block; }
+.identity-ledger td:first-child small { margin-top: 3px; color: var(--muted); }
 .assignment-grid { grid-template-columns: 1.5fr 1fr 1.2fr auto; }
 
 .tabs { display: flex; gap: 5px; }
@@ -842,7 +851,9 @@ td small { display: block; margin-top: 2px; color: var(--muted); font-size: .65r
   .section-heading .sync-pill { display: none; }
   .form-section > .field-label, .form-section > .field, .form-section > .form-grid, .form-section > .btn, .form-section > .field-help,
   .editing > .field-label, .editing > .field, .editing > .form-grid, .editing > .row, .editing > .field-help { margin-left: 17px; margin-right: 17px; }
-  .form-grid.two, .assignment-grid { grid-template-columns: 1fr; }
+  .form-grid.two, .assignment-grid, .account-grid { grid-template-columns: 1fr; }
+  .account-create form { padding: 17px; }
+  .account-create-action { align-items: stretch; flex-direction: column; }
   .filter-bar { align-items: stretch; }
   .filter-bar label, .filter-bar select, .filter-bar .btn, .search-field { width: 100%; }
   .filter-bar select { min-width: 0; }

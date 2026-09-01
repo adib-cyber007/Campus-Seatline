@@ -77,7 +77,7 @@ export const activeStops = () => db.stops.filter(s => s.active !== false)
 export function riderCountForStop(stopId) {
   const riderIds = new Set(
     db.users
-      .filter(user => user.role === 'rider' && user.stopIds.includes(stopId))
+      .filter(user => user.active !== false && user.role === 'rider' && user.stopIds.includes(stopId))
       .map(user => user.id)
   )
   for (const assignment of db.inchargeAssignments) {

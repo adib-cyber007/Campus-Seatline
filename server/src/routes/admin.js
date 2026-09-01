@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import {
   getDb, nextId, busById, stopById, sanitizeUser, activeBuses, activeStops, todayKey,
-  busByIdIncludingArchived, stopByIdIncludingArchived, riderCountForStop
+  busByIdIncludingArchived, stopByIdIncludingArchived, riderCountForStop, hashPassword
 } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import { snapshot } from '../services/occupancy.js'
@@ -78,7 +78,7 @@ router.get('/overview', (req, res) => {
           (a.scopeType === 'stop' && b.stopIds.includes(a.stopId) && Boolean(stopById(a.stopId)))))
         .map(a => db.users.find(u => u.id === a.riderId)?.name || a.riderId)
     })),
-    users: db.users.map(u => ({
+    users: db.users.filter(u => u.active !== false).map(u => ({
       ...sanitizeUser(u),
       stopNames: u.stopIds.map(id => stopByIdIncludingArchived(id)?.name || id)
     })),
@@ -104,10 +104,83 @@ router.post('/assistant/query', async (req, res) => {
   }
 })
 
+router.post('/users', (req, res) => {
+  const db = getDb()
+  const { name, email, password, role, stopIds } = req.body || {}
+  const cleanName = String(name || '').trim()
+  const cleanEmail = String(email || '').trim().toLowerCase()
+  if (!cleanName || !cleanEmail || !password) {
+    return res.status(400).json({ error: 'Name, email and initial password are required' })
+  }
+  if (String(password).length < 6) return res.status(400).json({ error: 'Initial password must be at least 6 characters' })
+  if (!['rider', 'admin'].includes(role)) return res.status(400).json({ error: 'Role must be rider or admin' })
+  if (db.users.some(user => user.email.toLowerCase() === cleanEmail)) {
+    return res.status(409).json({ error: 'Email already exists, including archived accounts' })
+  }
+  const ids = role === 'rider' && Array.isArray(stopIds) ? [...new Set(stopIds)] : []
+  if (role === 'rider' && ids.length === 0) return res.status(400).json({ error: 'Select at least one stop for a rider' })
+  if (ids.some(id => !stopById(id))) return res.status(400).json({ error: 'Unknown stop in selection' })
+
+  const user = {
+    id: nextId(), name: cleanName, email: cleanEmail, role,
+    passwordHash: hashPassword(String(password)), stopIds: ids, active: true,
+    createdAt: new Date().toISOString()
+  }
+  db.users.push(user)
+  refreshClients('user-created')
+  res.status(201).json({
+    user: { ...sanitizeUser(user), stopNames: ids.map(id => stopById(id)?.name || id) }
+  })
+})
+
+router.delete('/users/:id', (req, res) => {
+  const db = getDb()
+  const user = db.users.find(item => item.id === req.params.id && item.active !== false)
+  if (!user) return res.status(404).json({ error: 'Active user not found' })
+  if (user.id === req.user.id) return res.status(409).json({ error: 'You cannot remove your own signed-in Admin account' })
+  if (user.role === 'admin' && db.users.filter(item => item.active !== false && item.role === 'admin').length <= 1) {
+    return res.status(409).json({ error: 'The last active Admin account cannot be removed' })
+  }
+
+  const activeReports = db.boardingReports.filter(report =>
+    report.userId === user.id && report.tripDate === todayKey() &&
+    ['soft_hold', 'seats_occupied'].includes(report.state)
+  )
+  if (activeReports.length > 0) {
+    return res.status(409).json({
+      error: `Cannot remove ${user.name}: ${activeReports.length} active trip report${activeReports.length === 1 ? '' : 's'} must be released or completed first.`,
+      dependencies: { activeReports: activeReports.length }
+    })
+  }
+
+  const now = new Date().toISOString()
+  const revokedAssignmentIds = []
+  for (const assignment of db.inchargeAssignments.filter(item => item.riderId === user.id && !item.revokedAt)) {
+    assignment.revokedAt = now
+    assignment.revokedByAdminId = req.user.id
+    revokedAssignmentIds.push(assignment.id)
+  }
+  for (const prompt of db.prompts.filter(item => item.userId === user.id && item.status === 'pending')) {
+    prompt.status = 'cancelled'
+    prompt.answeredAt = now
+  }
+  for (const token of db.deviceTokens.filter(item => item.userId === user.id && item.active)) {
+    token.active = false
+    token.deactivatedAt = now
+    token.deactivationReason = 'user_archived'
+    token.updatedAt = now
+  }
+  user.active = false
+  user.archivedAt = now
+  user.archivedByAdminId = req.user.id
+  refreshClients('user-archived')
+  res.json({ archived: true, user: sanitizeUser(user), revokedAssignmentIds })
+})
+
 router.post('/incharge-assignments', (req, res) => {
   const db = getDb()
   const { riderId, scopeType, busId, stopId } = req.body || {}
-  const rider = db.users.find(u => u.id === riderId)
+  const rider = db.users.find(u => u.id === riderId && u.active !== false)
   if (!rider) return res.status(404).json({ error: 'Rider not found' })
   if (rider.role !== 'rider') return res.status(400).json({ error: 'Incharge authority can only be granted to rider accounts' })
   if (!['bus', 'stop'].includes(scopeType)) return res.status(400).json({ error: 'Scope must be bus or stop' })
@@ -251,7 +324,9 @@ function stopArchiveDependencies(stop) {
   const db = getDb()
   const tripDate = todayKey()
   return {
-    registeredRiders: db.users.filter(user => user.role === 'rider' && user.stopIds.includes(stop.id)).length,
+    registeredRiders: db.users.filter(user =>
+      user.active !== false && user.role === 'rider' && user.stopIds.includes(stop.id)
+    ).length,
     activeReports: db.boardingReports.filter(item =>
       item.stopId === stop.id && item.tripDate === tripDate && ['soft_hold', 'seats_occupied'].includes(item.state)
     ).length,

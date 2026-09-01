@@ -87,5 +87,13 @@ export function deriveAuditRecords(state) {
       metadata: { entityType: isBus ? 'bus' : 'stop' }, timestamp: item.archivedAt
     })
   }
+  for (const item of state.users.filter(user => user.active === false && user.archivedAt)) {
+    records.push({
+      id: `${item.id}-archived`, kind: 'user_archived', actorUserId: item.archivedByAdminId || null,
+      busId: null, stopId: null, tripDate: null, outcome: 'archived',
+      detail: `Archived ${item.role === 'admin' ? 'Admin' : 'Rider'} account ${item.name}`,
+      metadata: { userId: item.id, role: item.role, email: item.email }, timestamp: item.archivedAt
+    })
+  }
   return records
 }

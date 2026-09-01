@@ -580,24 +580,106 @@ function AssignmentsTab({ data, reload, toast }) {
   )
 }
 
-function UsersTab({ data }) {
+function UsersTab({ data, reload, toast }) {
+  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'rider', stopIds: [] })
+  const [query, setQuery] = useState('')
+  const [busy, setBusy] = useState('')
+  const set = (key, value) => setForm(current => ({ ...current, [key]: value }))
+  const toggleStop = id => set('stopIds', form.stopIds.includes(id)
+    ? form.stopIds.filter(stopId => stopId !== id)
+    : [...form.stopIds, id])
+  const activeAuthority = riderId => data.assignments.filter(item =>
+    item.riderId === riderId && !item.revokedAt
+  ).length
+  const visibleUsers = data.users.filter(user => {
+    const text = `${user.name} ${user.email} ${user.role} ${user.stopNames.join(' ')}`.toLowerCase()
+    return text.includes(query.trim().toLowerCase())
+  })
+
+  const create = async event => {
+    event.preventDefault()
+    if (busy) return
+    setBusy('create')
+    try {
+      await api('/admin/users', { method: 'POST', body: form })
+      toast(`${form.role === 'admin' ? 'Admin' : 'Rider'} account created`, 'feedback')
+      setForm({ name: '', email: '', password: '', role: 'rider', stopIds: [] })
+      reload()
+    } catch (error) { toast(error.message, 'error') }
+    finally { setBusy('') }
+  }
+
+  const remove = async user => {
+    const authorityCount = activeAuthority(user.id)
+    const authorityNote = authorityCount
+      ? ` ${authorityCount} active Incharge grant${authorityCount === 1 ? '' : 's'} will be revoked.`
+      : ''
+    if (busy || !window.confirm(
+      `Remove ${user.name}'s account?${authorityNote} Historical reports and audit records will be preserved. Active trip reports must be resolved first.`
+    )) return
+    setBusy(`remove-${user.id}`)
+    try {
+      const result = await api(`/admin/users/${user.id}`, { method: 'DELETE' })
+      const revoked = result.revokedAssignmentIds?.length || 0
+      toast(`Account removed${revoked ? ` and ${revoked} Incharge grant${revoked === 1 ? '' : 's'} revoked` : ''}`, 'feedback')
+      reload()
+    } catch (error) { toast(error.message, 'error') }
+    finally { setBusy('') }
+  }
+
   return (
-    <section className="card wide admin-section list-section">
-      <SectionHeading eyebrow="Account directory" title="People using Seatline" description="Incharge riders remain riders; their authority is listed separately." />
-      <div className="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Stops</th></tr></thead>
-        <tbody>
-          {data.users.map(u => (
-            <tr key={u.id}>
-              <td>{u.name}</td>
-              <td className="subtle">{u.email}</td>
-              <td><span className={`status-label ${u.role === 'admin' ? 'info' : 'covered'}`}>{u.role === 'admin' ? 'Admin' : 'Rider'}</span></td>
-              <td>{u.stopNames.join(', ') || '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table></div>
-    </section>
+    <>
+      <details className="card wide admin-section form-section create-disclosure account-create">
+        <summary><span><span className="eyebrow">Provision access</span><strong>Create an account</strong><small>Set an initial password for a Rider or transport Admin.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
+        <form onSubmit={create}>
+          <div className="form-grid account-grid">
+            <label className="field-label">Full name<input required autoComplete="off" value={form.name} onChange={event => set('name', event.target.value)} /></label>
+            <label className="field-label">Email address<input required type="email" autoComplete="off" value={form.email} onChange={event => set('email', event.target.value)} /></label>
+            <label className="field-label">Initial password<input required type="password" minLength="6" autoComplete="new-password" value={form.password} onChange={event => set('password', event.target.value)} /></label>
+            <label className="field-label">Account type<select value={form.role} onChange={event => set('role', event.target.value)}><option value="rider">Rider</option><option value="admin">Admin</option></select></label>
+          </div>
+          {form.role === 'rider' && (
+            <fieldset className="field account-stops">
+              <legend>Registered stop(s)</legend>
+              <p className="field-help">Choose every stop this rider regularly uses.</p>
+              <div className="chips">
+                {data.stops.map(stop => <button type="button" key={stop.id} aria-pressed={form.stopIds.includes(stop.id)} className={form.stopIds.includes(stop.id) ? 'chip sel' : 'chip'} onClick={() => toggleStop(stop.id)}><span className="checkmark" aria-hidden="true">✓</span>{stop.name}</button>)}
+              </div>
+            </fieldset>
+          )}
+          <div className="account-create-action">
+            <p><span aria-hidden="true">◇</span> Incharge remains an authority granted later to a Rider account.</p>
+            <button className="btn primary" disabled={Boolean(busy) || (form.role === 'rider' && form.stopIds.length === 0)}>{busy === 'create' ? <><span className="spinner" /> Creating</> : 'Create account'}</button>
+          </div>
+        </form>
+      </details>
+
+      <section className="card wide admin-section list-section identity-ledger">
+        <SectionHeading eyebrow="Identity ledger" title="Seatline accounts" description="Search active accounts and retire access without erasing operational history." />
+        <div className="controls filter-bar compact-bar">
+          <label className="search-field"><span className="sr-only">Search accounts</span><span className="search-icon" aria-hidden="true">⌕</span><input type="search" placeholder="Search name, email, stop, or role…" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        </div>
+        <p className="result-count" aria-live="polite"><strong>{visibleUsers.length}</strong> active account{visibleUsers.length === 1 ? '' : 's'}</p>
+        <div className="table-wrap"><table>
+          <thead><tr><th>Identity</th><th>Access</th><th>Registered stops</th><th>Incharge</th><th></th></tr></thead>
+          <tbody>
+            {visibleUsers.map(user => {
+              const authorityCount = activeAuthority(user.id)
+              return (
+                <tr key={user.id}>
+                  <td><strong>{user.name}</strong><small>{user.email}</small></td>
+                  <td><span className={`status-label ${user.role === 'admin' ? 'info' : 'covered'}`}>{user.role === 'admin' ? 'Admin' : 'Rider'}</span></td>
+                  <td>{user.stopNames.join(', ') || <span className="subtle">Transport-wide</span>}</td>
+                  <td>{authorityCount ? <span className="status-label authority">{authorityCount} active</span> : <span className="subtle">None</span>}</td>
+                  <td><button className="btn danger-quiet" disabled={Boolean(busy)} onClick={() => remove(user)}>{busy === `remove-${user.id}` ? 'Removing…' : 'Remove'}</button></td>
+                </tr>
+              )
+            })}
+            {visibleUsers.length === 0 && <tr><td colSpan="5"><div className="empty-inline"><span aria-hidden="true">⌕</span><p>No active accounts match this search.</p></div></td></tr>}
+          </tbody>
+        </table></div>
+      </section>
+    </>
   )
 }
 
@@ -896,7 +978,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         {tab === 'stops' && <StopsTab data={data} reload={load} toast={toast} />}
         {tab === 'buses' && <BusesTab data={data} reload={load} toast={toast} />}
         {tab === 'incharge' && <AssignmentsTab data={data} reload={load} toast={toast} />}
-        {tab === 'users' && <UsersTab data={data} />}
+        {tab === 'users' && <UsersTab data={data} reload={load} toast={toast} />}
         {tab === 'unmet' && <UnmetDemandTab data={data} />}
         {tab === 'audit' && <AuditTab data={data} auditFeed={auditFeed} />}
         {tab === 'assistant' && <AssistantTab />}

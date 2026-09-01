@@ -332,7 +332,7 @@ function downstreamRecipients(bus, stopId) {
   if (idx === -1) return []
   const downstream = bus.stopIds.slice(idx + 1)
   return db.users
-    .filter(u => effectiveStopIdsForUser(u).some(s => downstream.includes(s)))
+    .filter(u => u.active !== false && effectiveStopIdsForUser(u).some(s => downstream.includes(s)))
     .map(u => u.id)
 }
 
