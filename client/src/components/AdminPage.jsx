@@ -12,12 +12,25 @@ function SectionHeading({ eyebrow, title, description, action }) {
   return (
     <div className="section-heading">
       <div>
-        {eyebrow && <span className="eyebrow">{eyebrow}</span>}
+        {eyebrow && <span className="section-context">{eyebrow}</span>}
         <h2>{title}</h2>
         {description && <p>{description}</p>}
       </div>
       {action}
     </div>
+  )
+}
+
+function RouteLine({ stopIds, stops, label }) {
+  return (
+    <ol className="table-route-line" aria-label={`${label} stop sequence`}>
+      {stopIds.map(stopId => (
+        <li key={stopId}>
+          <span aria-hidden="true" />
+          {stops.find(stop => stop.id === stopId)?.name || stopId}
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -78,10 +91,9 @@ function OverviewTab({ data, occupancy }) {
   return (
     <section className="card wide admin-section">
       <SectionHeading
-        eyebrow="Live operations"
+        eyebrow="Current service"
         title="Occupancy by bus"
         description="Seats Occupied is derived from confirmed riders plus any audit-logged Incharge correction."
-        action={<span className="sync-pill live"><span />Updating live</span>}
       />
       <div className="table-wrap"><table>
         <thead>
@@ -95,13 +107,13 @@ function OverviewTab({ data, occupancy }) {
             const state = available === 0 ? 'full' : available / (o.capacity || b.capacity) <= .25 ? 'tight' : 'open'
             return (
               <tr key={b.id}>
-                <td><strong className="bus-name-cell">{b.name}</strong><small>{b.stopIds.length} stops</small></td>
-                <td><span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span></td>
-                <td>{o.seatsOccupied ?? 0}</td>
-                <td>{o.softHolds ?? 0}</td>
-                <td>{o.capacity ?? b.capacity}</td>
+                <td className="bus-route-cell"><strong className="bus-name-cell">{b.name}</strong><RouteLine stopIds={b.stopIds} stops={data.stops} label={b.name} /></td>
+                <td className="numeric-cell"><span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span></td>
+                <td className="numeric-cell">{o.seatsOccupied ?? 0}</td>
+                <td className="numeric-cell">{o.softHolds ?? 0}</td>
+                <td className="numeric-cell">{o.capacity ?? b.capacity}</td>
                 <td>{adj ? <span className="status-label warning">{adj > 0 ? `+${adj}` : adj}</span> : <span className="subtle">None</span>}</td>
-                <td className="subtle">{o.lastUpdated ? new Date(o.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                <td className="subtle numeric-cell">{o.lastUpdated ? new Date(o.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
               </tr>
             )
           })}
@@ -172,7 +184,7 @@ function StopsTab({ data, reload, toast }) {
   return (
     <>
       <details className="card wide admin-section form-section create-disclosure">
-        <summary><span><span className="eyebrow">Add to network</span><strong>Create a stop</strong><small>Name it, add expected arrivals, and link buses.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
+        <summary><span><span className="section-context">Network setup</span><strong>Create a stop</strong><small>Name it, add expected arrivals, and link buses.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
         <label className="field-label">Stop name<input placeholder="e.g. Engineering Gate" value={name} onChange={e => setName(e.target.value)} /></label>
         <TimelineEditor rows={rows} setRows={setRows} />
         <fieldset className="field">
@@ -443,7 +455,7 @@ function BusesTab({ data, reload, toast }) {
           : (
             <article key={b.id} className="card bus-management-card">
               <div className="card-head">
-                <div><span className="eyebrow">{b.capacity} seat capacity</span><h2>{b.name}</h2></div>
+                <div><span className="capacity-label">{b.capacity} seat capacity</span><h2>{b.name}</h2></div>
                 <button className="btn secondary" onClick={() => setEditingId(b.id)}>Edit bus</button>
               </div>
               <div className="management-meta">
@@ -484,7 +496,7 @@ function NewBus({ data, reload, toast }) {
 
   return (
     <details className="card wide admin-section form-section create-disclosure">
-      <summary><span><span className="eyebrow">Fleet setup</span><strong>Create a bus</strong><small>Set capacity and build its ordered stop sequence.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
+      <summary><span><span className="section-context">Fleet setup</span><strong>Create a bus</strong><small>Set capacity and build its ordered stop sequence.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
       <div className="form-grid two">
         <label className="field-label">Bus name or number<input placeholder="e.g. Shuttle-03" value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="field-label">Seat capacity<input type="number" min="1" value={capacity} onChange={e => setCapacity(e.target.value)} /></label>
@@ -694,7 +706,7 @@ function UsersTab({ data, reload, toast }) {
   return (
     <>
       <details className="card wide admin-section form-section create-disclosure account-create">
-        <summary><span><span className="eyebrow">Provision access</span><strong>Create an account</strong><small>Set an initial password for a Rider or transport Admin.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
+        <summary><span><span className="section-context">Account setup</span><strong>Create an account</strong><small>Set an initial password for a Rider or transport Admin.</small></span><span className="disclosure-plus" aria-hidden="true">+</span></summary>
         <form onSubmit={create}>
           <div className="form-grid account-grid">
             <label className="field-label">Full name<input required autoComplete="off" value={form.name} onChange={event => set('name', event.target.value)} /></label>
@@ -1016,18 +1028,16 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
     <div className="admin-page">
       <header className="page-intro admin-intro">
         <div>
-          <p className="eyebrow">Transport operations</p>
           <h1>Network control desk</h1>
           <p className="supporting">Manage stop-led bus service, rider authority, and live seat counts.</p>
         </div>
-        <span className={`sync-pill ${connectionStatus}`}><span />{connectionStatus === 'live' ? 'Live data connected' : 'Reconnecting to live data'}</span>
       </header>
 
       <section className="ops-summary" aria-label="Network summary">
-        <div><span className="summary-icon bus" aria-hidden="true">▣</span><span><strong>{data.buses.length}</strong><small>Buses · {totalCapacity} seats</small></span></div>
-        <div><span className="summary-icon stop" aria-hidden="true">●</span><span><strong>{data.stops.length}</strong><small>Stops in network</small></span></div>
-        <div><span className="summary-icon authority" aria-hidden="true">◇</span><span><strong>{activeAssignments}</strong><small>Active Incharge grants</small></span></div>
-        <div className={coveredStops < data.stops.length ? 'attention' : ''}><span className="summary-icon coverage" aria-hidden="true">{coveredStops < data.stops.length ? '!' : '✓'}</span><span><strong>{data.stops.length - coveredStops}</strong><small>Stops need coverage</small></span></div>
+        <div className="manifest-stat fleet"><span className="summary-icon bus" aria-hidden="true">▣</span><span><strong>{data.buses.length}</strong><small>Buses in service · {totalCapacity} seats</small></span></div>
+        <div className="manifest-stat stops"><span className="summary-icon stop" aria-hidden="true">●</span><span><strong>{data.stops.length}</strong><small>Stops in network</small></span></div>
+        <div className="manifest-stat authority"><span className="summary-icon authority" aria-hidden="true">◇</span><span><strong>{activeAssignments}</strong><small>Active Incharge grants</small></span></div>
+        <div className={`manifest-stat coverage ${coveredStops < data.stops.length ? 'attention' : 'covered'}`}><span className="summary-icon coverage" aria-hidden="true">{coveredStops < data.stops.length ? '!' : '✓'}</span><span><strong>{data.stops.length - coveredStops}</strong><small>{coveredStops < data.stops.length ? 'Stops need coverage' : 'Every stop is covered'}</small></span></div>
       </section>
 
       <nav className="tabs admin-tabs" role="tablist" aria-label="Admin sections">

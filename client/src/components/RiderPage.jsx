@@ -78,7 +78,6 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
     <article className={`bus-card state-${state.key}`} aria-labelledby={`bus-${bus.busId}`}>
       <header className="bus-card-head">
         <div>
-          <span className="eyebrow">Bus serving your stop</span>
           <h2 id={`bus-${bus.busId}`}>{bus.busName}</h2>
         </div>
         <div className="bus-badges">
@@ -103,7 +102,7 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       </div>
 
       <div className="route-section">
-        <span className="section-label">Stop sequence</span>
+        <h3 className="route-heading">Route stops</h3>
         <ol className="route-rail" aria-label={`${bus.busName} stop sequence`}>
           {bus.stopNames.map((name, index) => {
             const passed = bus.passedStopIds.includes(bus.stopIds[index])
@@ -140,7 +139,7 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       {bus.inchargeAuthority && (
         <section className="incharge-panel" aria-labelledby={`incharge-${bus.busId}`}>
           <div className="incharge-heading">
-            <div><span className="eyebrow">Authority control</span><h3 id={`incharge-${bus.busId}`}>Correct Seats Available</h3></div>
+            <div><h3 id={`incharge-${bus.busId}`}>Correct Seats Available</h3></div>
             <span className="audit-note"><span aria-hidden="true">●</span> Audit logged</span>
           </div>
           <p>Use this only when the live count needs a physical correction. Seats Occupied is recalculated automatically.</p>
@@ -454,13 +453,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
     <div className="rider-page">
       <header className="page-intro rider-intro">
         <div>
-          <p className="eyebrow">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+          <p className="dayline">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</p>
           <h1>Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user.name.split(' ')[0]}</h1>
           <p className="supporting">Your buses for {overview.stops.map(stop => stop.name).join(' · ')}</p>
         </div>
         <div className="intro-meta">
           {timeline.slice(0, 2).map((row, index) => <span key={`${row.stopName}-${row.time}-${index}`}><strong>{row.time}</strong> {row.label || row.stopName}</span>)}
-          <span className={`sync-pill ${connectionStatus}`}><span />{connectionStatus === 'live' ? 'Counts updating live' : 'Trying to reconnect'}</span>
         </div>
       </header>
 
@@ -495,7 +493,6 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
         <div className="card ble-card">
           <div className="utility-icon signal" aria-hidden="true"><span /><span /><span /></div>
           <div className="utility-copy">
-            <span className="eyebrow">BLE proximity</span>
             <h2>Detect bus proximity</h2>
             <p>Seatline watches the buses serving your stop in the foreground or while the app is closed. Beacon identities stay private to transport Admins; no bus selection, GPS, or location permission is required.</p>
           </div>
@@ -576,7 +573,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
 
         <details className="card notifications-card" open={livePrompts.length === 0 && combinedNotifications.length > 0}>
           <summary>
-            <span><span className="eyebrow">Updates</span><strong>Notifications</strong></span>
+            <span><strong>Notifications</strong></span>
             <span className="notification-count">{combinedNotifications.length}</span>
           </summary>
           {combinedNotifications.length === 0 ? (
@@ -595,7 +592,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
 
         <details className="card stop-override-card">
           <summary>
-            <span><span className="eyebrow">Optional for today</span><strong>Boarding from a different stop today?</strong></span>
+            <span><span className="section-context">Today’s trip</span><strong>Boarding from a different stop today?</strong></span>
             <span className="disclosure-plus" aria-hidden="true">+</span>
           </summary>
           <p>Your registered stop stays unchanged. This selection automatically expires when today’s trip day ends.</p>

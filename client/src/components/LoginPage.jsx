@@ -60,7 +60,6 @@ export default function LoginPage({ onLoggedIn }) {
         <aside className="auth-story">
           <div className="auth-wordmark"><span className="mini-bus" aria-hidden="true" /> Campus Seatline</div>
           <div>
-            <p className="eyebrow light">Campus rides, without the guesswork</p>
             <h1>Know if there’s room before the bus reaches your stop.</h1>
             <p>Live seat reports from riders. No maps, no GPS, no continuous location tracking.</p>
           </div>
@@ -73,9 +72,8 @@ export default function LoginPage({ onLoggedIn }) {
 
         <form className="card auth" onSubmit={submit}>
           <div className="auth-heading">
-            <p className="eyebrow">Welcome to Seatline</p>
             <h2>Sign in to check your bus</h2>
-            <p className="supporting">Live availability is one tap away. Accounts are issued by your transport office.</p>
+            <p className="supporting">Use the account issued by your campus transport office.</p>
           </div>
           <details className="server-settings" open={nativeApp && !getApiOrigin()}>
             <summary>Server connection</summary>
@@ -108,7 +106,7 @@ export default function LoginPage({ onLoggedIn }) {
             {busy ? <><span className="spinner" /> Please wait</> : 'Sign in'}
           </button>
           <div className="seed">
-              <span className="seed-label">Try a demo account</span>
+              <p className="demo-heading">Demo access</p>
               <div className="demo-accounts">
                 <button type="button" onClick={() => useDemo('rider@campus.edu', 'rider123')}><strong>Rider</strong><span>Main Gate</span></button>
                 <button type="button" onClick={() => useDemo('incharge@campus.edu', 'incharge123')}><strong>Rider + Incharge</strong><span>Shuttle-01</span></button>
