@@ -5,6 +5,7 @@ import { setIo } from './realtime.js'
 import { verifyToken } from './auth.js'
 import { snapshot } from './services/occupancy.js'
 import { userById } from './db.js'
+import { startTripScheduler } from './services/trips.js'
 
 const httpServer = createServer(app)
 const io = new Server(httpServer, { cors: { origin: true } })
@@ -29,6 +30,7 @@ io.on('connection', socket => {
 })
 
 setIo(io)
+startTripScheduler()
 
 const PORT = process.env.PORT || 4000
 httpServer.listen(PORT, () => console.log(`API + WebSocket listening on http://localhost:${PORT}`))

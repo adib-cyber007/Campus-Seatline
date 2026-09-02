@@ -8,6 +8,7 @@ import adminRoutes from './routes/admin.js'
 import { onDetection } from './services/bleGateway.js'
 import { databaseMiddleware } from './db.js'
 import { handleDetection } from './services/occupancy.js'
+import { reconcileTripScheduleMiddleware } from './services/trips.js'
 
 onDetection(handleDetection)
 
@@ -16,6 +17,7 @@ export const app = express()
 app.use(cors())
 app.use(express.json())
 app.use(databaseMiddleware)
+app.use(reconcileTripScheduleMiddleware)
 
 app.get('/api/health', (req, res) => res.json({ ok: true, gps: 'not-used-anywhere' }))
 

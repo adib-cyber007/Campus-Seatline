@@ -342,8 +342,18 @@ function seed() {
   db.users.push(admin, inch1, r1, r2, r3)
 
   db.buses.push(
-    { id: b1, name: 'Shuttle-01', capacity: 40, stopIds: [s1, s2, s3], beacon: beaconIdentityForBus(b1) },
-    { id: b2, name: 'Express-02', capacity: 24, stopIds: [s1, s4, s5], beacon: beaconIdentityForBus(b2) }
+    {
+      id: b1, name: 'Shuttle-01', capacity: 40, stopIds: [s1, s2, s3],
+      morningStartTime: process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '00:00' : '07:00',
+      eveningStartTime: process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '23:59' : '17:00',
+      beacon: beaconIdentityForBus(b1)
+    },
+    {
+      id: b2, name: 'Express-02', capacity: 24, stopIds: [s1, s4, s5],
+      morningStartTime: process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '00:00' : '07:00',
+      eveningStartTime: process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '23:59' : '17:00',
+      beacon: beaconIdentityForBus(b2)
+    }
   )
 
   db.inchargeAssignments.push({
