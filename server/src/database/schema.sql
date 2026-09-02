@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS buses (
   id uuid PRIMARY KEY,
   name text NOT NULL CHECK (btrim(name) <> ''),
   capacity integer NOT NULL CHECK (capacity > 0),
+  morning_start_time time NOT NULL DEFAULT '07:00',
+  evening_start_time time NOT NULL DEFAULT '17:00',
   active boolean NOT NULL DEFAULT true,
   archived_at timestamptz,
   archived_by_admin_id uuid,
@@ -43,6 +45,8 @@ CREATE TABLE IF NOT EXISTS buses (
 ALTER TABLE buses ADD COLUMN IF NOT EXISTS active boolean NOT NULL DEFAULT true;
 ALTER TABLE buses ADD COLUMN IF NOT EXISTS archived_at timestamptz;
 ALTER TABLE buses ADD COLUMN IF NOT EXISTS archived_by_admin_id uuid;
+ALTER TABLE buses ADD COLUMN IF NOT EXISTS morning_start_time time NOT NULL DEFAULT '07:00';
+ALTER TABLE buses ADD COLUMN IF NOT EXISTS evening_start_time time NOT NULL DEFAULT '17:00';
 
 CREATE TABLE IF NOT EXISTS bus_beacons (
   bus_id uuid PRIMARY KEY REFERENCES buses(id) ON DELETE CASCADE,
@@ -70,6 +74,45 @@ CREATE TABLE IF NOT EXISTS bus_stops (
   PRIMARY KEY (bus_id, stop_id),
   UNIQUE (bus_id, position)
 );
+
+CREATE TABLE IF NOT EXISTS operating_calendar (
+  id text PRIMARY KEY,
+  service_weekdays jsonb NOT NULL DEFAULT '[1,2,3,4,5]'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by_admin_id uuid REFERENCES users(id) ON DELETE RESTRICT
+);
+INSERT INTO operating_calendar (id, service_weekdays)
+VALUES ('default', '[1,2,3,4,5]'::jsonb)
+ON CONFLICT (id) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS operating_calendar_exceptions (
+  service_date date PRIMARY KEY,
+  service boolean NOT NULL,
+  note text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  updated_by_admin_id uuid REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS trips (
+  id uuid PRIMARY KEY,
+  bus_id uuid NOT NULL REFERENCES buses(id) ON DELETE RESTRICT,
+  trip_date date NOT NULL,
+  direction text NOT NULL CHECK (direction IN ('morning', 'evening')),
+  stop_sequence jsonb NOT NULL,
+  boarding_stop_set jsonb NOT NULL,
+  status text NOT NULL CHECK (status IN ('scheduled', 'active', 'completed')),
+  activated_at timestamptz,
+  completed_at timestamptz,
+  completion_reason text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (bus_id, trip_date, direction)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS trips_one_active_per_bus
+  ON trips (bus_id) WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS trips_date_direction_idx
+  ON trips (trip_date DESC, direction, bus_id);
 
 CREATE TABLE IF NOT EXISTS incharge_assignments (
   id uuid PRIMARY KEY,
@@ -260,5 +303,69 @@ CREATE TABLE IF NOT EXISTS fcm_device_tokens (
 );
 CREATE INDEX IF NOT EXISTS fcm_device_tokens_active_user_idx
   ON fcm_device_tokens (user_id) WHERE active;
+
+ALTER TABLE boarding_reports ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE boarding_reports ADD COLUMN IF NOT EXISTS alight_stop_id uuid REFERENCES stops(id) ON DELETE RESTRICT;
+ALTER TABLE boarding_reports ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+ALTER TABLE boarding_reports DROP CONSTRAINT IF EXISTS boarding_reports_user_id_bus_id_trip_date_key;
+DROP INDEX IF EXISTS boarding_reports_one_active_per_rider_trip;
+UPDATE boarding_reports
+SET state = 'released', release_reason = COALESCE(release_reason, 'legacy_day_closed'),
+    released_at = COALESCE(released_at, now()), updated_at = now()
+WHERE trip_date < current_date AND state IN ('soft_hold', 'seats_occupied');
+CREATE UNIQUE INDEX IF NOT EXISTS boarding_reports_one_record_per_rider_bus_trip
+  ON boarding_reports (user_id, trip_id) WHERE trip_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS boarding_reports_one_active_per_rider_service_trip
+  ON boarding_reports (user_id, trip_date, trip_direction)
+  WHERE state IN ('soft_hold', 'seats_occupied');
+CREATE UNIQUE INDEX IF NOT EXISTS boarding_reports_one_soft_hold_globally
+  ON boarding_reports (user_id) WHERE state = 'soft_hold';
+CREATE INDEX IF NOT EXISTS boarding_reports_trip_idx ON boarding_reports (trip_id);
+
+CREATE TABLE IF NOT EXISTS trip_occupancy_adjustments (
+  trip_id uuid PRIMARY KEY REFERENCES trips(id) ON DELETE CASCADE,
+  manual_adjustment integer NOT NULL DEFAULT 0,
+  last_updated timestamptz NOT NULL
+);
+
+ALTER TABLE ble_prompts ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE ble_prompts ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+DROP INDEX IF EXISTS ble_prompts_one_pending_context;
+CREATE UNIQUE INDEX IF NOT EXISTS ble_prompts_one_pending_trip_context
+  ON ble_prompts (user_id, trip_id, stop_id) WHERE status = 'pending';
+
+ALTER TABLE arrival_events ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE arrival_events ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+ALTER TABLE arrival_events DROP CONSTRAINT IF EXISTS arrival_events_bus_id_stop_id_trip_date_key;
+CREATE UNIQUE INDEX IF NOT EXISTS arrival_events_trip_stop_unique
+  ON arrival_events (trip_id, stop_id) WHERE trip_id IS NOT NULL;
+
+ALTER TABLE report_attempts ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE report_attempts ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+ALTER TABLE unmet_demand_events ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE unmet_demand_events ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+DROP INDEX IF EXISTS unmet_demand_trip_stop_bus_idx;
+CREATE INDEX IF NOT EXISTS unmet_demand_trip_stop_bus_idx
+  ON unmet_demand_events (trip_date DESC, trip_direction, stop_id, bus_id);
+ALTER TABLE incharge_overrides ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE incharge_overrides ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+ALTER TABLE audit_records ADD COLUMN IF NOT EXISTS trip_id uuid REFERENCES trips(id) ON DELETE RESTRICT;
+ALTER TABLE audit_records ADD COLUMN IF NOT EXISTS trip_direction text;
+ALTER TABLE auto_hold_evaluations ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
+ALTER TABLE auto_hold_evaluations DROP CONSTRAINT IF EXISTS auto_hold_evaluations_user_id_trip_date_context_key_key;
+CREATE UNIQUE INDEX IF NOT EXISTS auto_hold_evaluations_service_trip_unique
+  ON auto_hold_evaluations (user_id, trip_date, trip_direction, context_key);
+
+CREATE TABLE IF NOT EXISTS trip_closures (
+  id uuid PRIMARY KEY,
+  trip_id uuid NOT NULL UNIQUE REFERENCES trips(id) ON DELETE RESTRICT,
+  reason text NOT NULL,
+  final_base_occupied integer NOT NULL,
+  final_manual_adjustment integer NOT NULL,
+  final_seats_occupied integer NOT NULL,
+  final_soft_holds integer NOT NULL,
+  unresolved_soft_holds integer NOT NULL,
+  timestamp timestamptz NOT NULL
+);
 
 COMMIT;

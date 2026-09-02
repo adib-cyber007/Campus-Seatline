@@ -2,9 +2,11 @@ export function deriveAuditRecords(state) {
   const userName = id => state.users.find(item => item.id === id)?.name || id
   const busName = id => state.buses.find(item => item.id === id)?.name || id
   const stopName = id => state.stops.find(item => item.id === id)?.name || id
+  const tripFor = id => state.trips.find(item => item.id === id)
   const records = state.reportAttempts.map(item => ({
     id: item.id, kind: 'report_attempt', actorUserId: item.userId,
-    busId: item.busId, stopId: item.stopId || null, tripDate: item.tripDate,
+    busId: item.busId, stopId: item.stopId || null, tripId: item.tripId || null,
+    tripDate: item.tripDate, tripDirection: item.tripDirection || tripFor(item.tripId)?.direction || 'morning',
     outcome: item.outcome,
     detail: `${item.channel} "${String(item.requested).toUpperCase()}" -> ${item.outcome} · Bus ${busName(item.busId)}` +
       (item.stopId ? ` · Stop ${stopName(item.stopId)}` : '') +
@@ -16,7 +18,8 @@ export function deriveAuditRecords(state) {
   for (const item of state.arrivalEvents) {
     records.push({
       id: item.id, kind: 'arrival_event', actorUserId: item.confirmedByUserIds[0] || null,
-      busId: item.busId, stopId: item.stopId, tripDate: item.tripDate,
+      busId: item.busId, stopId: item.stopId, tripId: item.tripId || null,
+      tripDate: item.tripDate, tripDirection: item.tripDirection || tripFor(item.tripId)?.direction || 'morning',
       outcome: item.inferred ? 'inferred_crossed' : 'confirmed',
       detail: item.inferred
         ? `Bus ${busName(item.busId)} inferred past Stop ${stopName(item.stopId)} after confirmation at ${stopName(item.inferredFromStopId)}`
@@ -33,7 +36,8 @@ export function deriveAuditRecords(state) {
   for (const item of state.overrides) {
     records.push({
       id: item.id, kind: 'incharge_override', actorUserId: item.inchargeId,
-      busId: item.busId, stopId: null, tripDate: item.tripDate, outcome: 'accepted',
+      busId: item.busId, stopId: null, tripId: item.tripId || null,
+      tripDate: item.tripDate, tripDirection: item.tripDirection || tripFor(item.tripId)?.direction || 'morning', outcome: 'accepted',
       detail: `Bus ${busName(item.busId)}: Seats Available ${item.previousAvailable} -> ${item.newAvailable} ` +
         `(Seats Occupied derived ${item.previousOccupied} -> ${item.newOccupied})`,
       metadata: {
@@ -69,11 +73,30 @@ export function deriveAuditRecords(state) {
   for (const item of state.unmetDemandEvents) {
     records.push({
       id: item.id, kind: 'unmet_demand', actorUserId: item.userId,
-      busId: item.busId, stopId: item.stopId, tripDate: item.tripDate,
+      busId: item.busId, stopId: item.stopId, tripId: item.tripId || null,
+      tripDate: item.tripDate, tripDirection: item.tripDirection || tripFor(item.tripId)?.direction || 'morning',
       outcome: item.hadAlternateBus ? 'had_alternative' : 'stranded',
       detail: `${userName(item.userId)} could not get a seat on Bus ${busName(item.busId)} at Stop ${stopName(item.stopId)}` +
         (item.hadAlternateBus ? ' · alternate bus available' : ' · no alternate bus available'),
       metadata: { channel: item.channel, alternateBusIds: item.alternateBusIds },
+      timestamp: item.timestamp
+    })
+  }
+
+  for (const item of state.tripClosures || []) {
+    const trip = tripFor(item.tripId)
+    records.push({
+      id: item.id, kind: 'trip_closed', actorUserId: null,
+      busId: trip?.busId || null, stopId: null, tripId: item.tripId,
+      tripDate: trip?.date || null, tripDirection: trip?.direction || null,
+      outcome: item.reason,
+      detail: `Force-closed ${trip?.direction || 'unknown'} trip for Bus ${busName(trip?.busId)} with ${item.finalSeatsOccupied} occupied and ${item.finalSoftHolds} Soft Hold${item.finalSoftHolds === 1 ? '' : 's'}`,
+      metadata: {
+        reason: item.reason, finalBaseOccupied: item.finalBaseOccupied,
+        finalManualAdjustment: item.finalManualAdjustment,
+        finalSeatsOccupied: item.finalSeatsOccupied, finalSoftHolds: item.finalSoftHolds,
+        unresolvedSoftHolds: item.unresolvedSoftHolds
+      },
       timestamp: item.timestamp
     })
   }
