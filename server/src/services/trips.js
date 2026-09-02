@@ -247,9 +247,13 @@ export function reconcileTripSchedule(now = new Date()) {
         tripOccupancyOf(target.id).manualAdjustment = 0
         tripOccupancyOf(target.id).lastUpdated = now.toISOString()
         activated.push(target)
-        for (const handler of activationHandlers) handler(target)
       }
       activeTripForBus(bus.id)
+    }
+    // Run activation effects only after every bus has switched, so viable-bus
+    // evaluation sees the complete direction-specific service rather than a partial set.
+    for (const trip of activated) {
+      for (const handler of activationHandlers) handler(trip)
     }
   }
 

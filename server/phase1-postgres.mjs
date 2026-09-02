@@ -100,7 +100,8 @@ async function provisionUser(adminToken, body) {
 async function databaseFingerprint() {
   const tables = [
     'users', 'stops', 'buses', 'bus_beacons', 'user_stops', 'bus_stops', 'incharge_assignments',
-    'boarding_reports', 'occupancy_adjustments', 'ble_prompts', 'arrival_events',
+    'operating_calendar', 'operating_calendar_exceptions', 'trips', 'trip_occupancy_adjustments',
+    'trip_closures', 'boarding_reports', 'occupancy_adjustments', 'ble_prompts', 'arrival_events',
     'arrival_event_confirmations', 'report_attempts', 'unmet_demand_events', 'incharge_overrides',
     'audit_records', 'daily_stop_overrides', 'notifications', 'fcm_device_tokens'
   ]
@@ -298,22 +299,32 @@ async function main() {
     postRace.buses.find(item => item.busId === busA.id).softHolds === 0)
 
   let uniqueViolation = null
+  const activeTripRows = (await pool.query(
+    'SELECT id,bus_id,trip_date,direction FROM trips WHERE bus_id = ANY($1::uuid[]) AND status = $2',
+    [[busA.id, busB.id], 'active']
+  )).rows
+  const tripA = activeTripRows.find(item => item.bus_id === busA.id)
+  const tripB = activeTripRows.find(item => item.bus_id === busB.id)
   await pool.query('BEGIN')
   try {
     const values = [
-      crypto.randomUUID(), riderThree.user.id, busA.id, stopA.id, todayKey(),
-      'soft_hold', 'constraint_probe', new Date().toISOString(), new Date().toISOString()
+      crypto.randomUUID(), riderThree.user.id, tripA.id, busA.id, stopA.id,
+      tripA.trip_date, tripA.direction, 'soft_hold', 'constraint_probe',
+      new Date().toISOString(), new Date().toISOString()
     ]
     await pool.query(
-      'INSERT INTO boarding_reports (id,user_id,bus_id,stop_id,trip_date,state,source,created_at,updated_at) ' +
-      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', values
+      'INSERT INTO boarding_reports (id,user_id,trip_id,bus_id,stop_id,trip_date,trip_direction,state,source,created_at,updated_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', values
     )
     values[0] = crypto.randomUUID()
-    values[2] = busB.id
-    values[5] = 'seats_occupied'
+    values[2] = tripB.id
+    values[3] = busB.id
+    values[5] = tripB.trip_date
+    values[6] = tripB.direction
+    values[7] = 'seats_occupied'
     await pool.query(
-      'INSERT INTO boarding_reports (id,user_id,bus_id,stop_id,trip_date,state,source,created_at,updated_at) ' +
-      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', values
+      'INSERT INTO boarding_reports (id,user_id,trip_id,bus_id,stop_id,trip_date,trip_direction,state,source,created_at,updated_at) ' +
+      'VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', values
     )
   } catch (error) {
     uniqueViolation = error
@@ -322,15 +333,21 @@ async function main() {
   }
   check('database rejects two active reports for one rider/trip',
     uniqueViolation?.code === '23505' &&
-    uniqueViolation.constraint === 'boarding_reports_one_active_per_rider_trip')
+    uniqueViolation.constraint === 'boarding_reports_one_active_per_rider_service_trip')
 
   const index = await pool.query(
-    "SELECT indexdef FROM pg_indexes WHERE indexname = 'boarding_reports_one_active_per_rider_trip'"
+    "SELECT indexdef FROM pg_indexes WHERE indexname = 'boarding_reports_one_active_per_rider_service_trip'"
   )
   check('active-report rule is a PostgreSQL partial unique index',
     index.rows[0]?.indexdef.includes('UNIQUE') &&
     index.rows[0]?.indexdef.includes('soft_hold') &&
     index.rows[0]?.indexdef.includes('seats_occupied'))
+
+  const tripIndexes = await pool.query(
+    "SELECT indexname,indexdef FROM pg_indexes WHERE indexname IN ('boarding_reports_one_record_per_rider_bus_trip','boarding_reports_one_soft_hold_globally','trips_one_active_per_bus')"
+  )
+  check('database also enforces one record per rider/Trip, one global Soft Hold, and one active Trip per bus',
+    tripIndexes.rows.length === 3 && tripIndexes.rows.every(item => item.indexdef.includes('UNIQUE')))
 
   console.log('\nPhase 1 PostgreSQL verification passed.')
 }

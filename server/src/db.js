@@ -167,19 +167,28 @@ export function deactivateDeviceTokenValue(fcmToken, reason = 'invalid_fcm_token
 
 const ACTIVE_REPORT_STATES = new Set(['soft_hold', 'seats_occupied'])
 
-export function activeReportForUser(userId, tripDate = todayKey()) {
+function reportPeriod(tripOrDate = todayKey(), tripDirection = 'morning') {
+  if (tripOrDate && typeof tripOrDate === 'object') {
+    return { tripDate: tripOrDate.date, tripDirection: tripOrDate.direction }
+  }
+  return { tripDate: tripOrDate, tripDirection }
+}
+
+export function activeReportForUser(userId, tripOrDate = todayKey(), tripDirection = 'morning') {
+  const period = reportPeriod(tripOrDate, tripDirection)
   const active = db.boardingReports.filter(
-    report => report.userId === userId && report.tripDate === tripDate && ACTIVE_REPORT_STATES.has(report.state)
+    report => report.userId === userId && report.tripDate === period.tripDate &&
+      (report.tripDirection || 'morning') === period.tripDirection && ACTIVE_REPORT_STATES.has(report.state)
   )
   if (active.length > 1) {
-    throw new Error(`Rider report invariant violated for ${userId} on ${tripDate}`)
+    throw new Error(`Rider report invariant violated for ${userId} on ${period.tripDate} ${period.tripDirection}`)
   }
   return active[0] || null
 }
 
-function reportFor(userId, busId, tripDate) {
+function reportFor(userId, tripId) {
   return db.boardingReports.find(
-    report => report.userId === userId && report.busId === busId && report.tripDate === tripDate
+    report => report.userId === userId && report.tripId === tripId
   )
 }
 
@@ -188,27 +197,30 @@ function reportFor(userId, busId, tripDate) {
  * validates first, then releases any previous Soft Hold and applies the target state
  * before returning, so no observer can see a half-completed bus switch.
  */
-export function transitionRiderReport({ userId, busId, stopId = null, toState, source = 'manual' }) {
+export function transitionRiderReport({ userId, trip, stopId = null, alightStopId = null, toState, source = 'manual' }) {
   if (!ACTIVE_REPORT_STATES.has(toState)) throw new Error(`Unsupported rider report state: ${toState}`)
+  if (!trip?.id || !trip?.busId || !trip?.date || !trip?.direction) {
+    throw new Error('A persisted Trip is required for rider report transitions')
+  }
 
-  const tripDate = todayKey()
-  const active = activeReportForUser(userId, tripDate)
+  const active = activeReportForUser(userId, trip)
   if (active?.state === 'seats_occupied') {
     return {
       ok: false,
-      reason: active.busId === busId ? 'already_occupied_same_bus' : 'already_occupied_other_bus',
+      reason: active.busId === trip.busId ? 'already_occupied_same_bus' : 'already_occupied_other_bus',
       active
     }
   }
-  if (active?.busId === busId && active.state === toState) {
+  if (active?.tripId === trip.id && active.state === toState) {
     return { ok: true, changed: false, record: active, previous: active, released: null }
   }
 
   const now = new Date().toISOString()
-  let target = reportFor(userId, busId, tripDate)
+  let target = reportFor(userId, trip.id)
   if (!target) {
     target = {
-      id: uid(), userId, busId, stopId, tripDate, state: null, source,
+      id: uid(), userId, tripId: trip.id, busId: trip.busId, stopId, alightStopId,
+      tripDate: trip.date, tripDirection: trip.direction, state: null, source,
       createdAt: now, updatedAt: now
     }
     db.boardingReports.push(target)
@@ -216,30 +228,37 @@ export function transitionRiderReport({ userId, busId, stopId = null, toState, s
 
   const previous = active ? { ...active } : null
   let released = null
-  if (active && active.busId !== busId) {
-    released = { ...active }
-    active.state = 'released'
-    active.releasedAt = now
-    active.releaseReason = toState === 'seats_occupied' ? 'ble_bus_switch' : 'soft_hold_transfer'
-    active.updatedAt = now
+  const globalHold = db.boardingReports.find(report =>
+    report.userId === userId && report.state === 'soft_hold' && report.id !== target.id
+  )
+  const prior = active && active.id !== target.id ? active : globalHold
+  if (prior) {
+    released = { ...prior }
+    prior.state = 'released'
+    prior.releasedAt = now
+    prior.releaseReason = toState === 'seats_occupied' ? 'ble_bus_switch' : 'soft_hold_transfer'
+    prior.updatedAt = now
   }
 
-  const promoted = active?.busId === busId && active.state === 'soft_hold' && toState === 'seats_occupied'
+  const promoted = active?.tripId === trip.id && active.state === 'soft_hold' && toState === 'seats_occupied'
   target.state = toState
   target.stopId = stopId
+  target.alightStopId = alightStopId
   target.source = source
   target.updatedAt = now
   delete target.releasedAt
   delete target.releaseReason
 
   // Re-read through the invariant guard before exposing the result.
-  activeReportForUser(userId, tripDate)
+  activeReportForUser(userId, trip)
   return { ok: true, changed: true, record: target, previous, released, promoted }
 }
 
-export function releaseRiderSoftHold({ userId, busId, reason = 'rider_release' }) {
-  const active = activeReportForUser(userId)
-  if (!active || active.state !== 'soft_hold' || active.busId !== busId) {
+export function releaseRiderSoftHold({ userId, trip, reason = 'rider_release' }) {
+  const active = trip ? activeReportForUser(userId, trip) : db.boardingReports.find(
+    report => report.userId === userId && report.state === 'soft_hold'
+  )
+  if (!active || active.state !== 'soft_hold' || (trip && active.tripId !== trip.id)) {
     return { ok: false, reason: 'no_active_soft_hold', active }
   }
   const now = new Date().toISOString()
@@ -247,7 +266,7 @@ export function releaseRiderSoftHold({ userId, busId, reason = 'rider_release' }
   active.releasedAt = now
   active.releaseReason = reason
   active.updatedAt = now
-  activeReportForUser(userId)
+  if (trip) activeReportForUser(userId, trip)
   return { ok: true, changed: true, record: active }
 }
 

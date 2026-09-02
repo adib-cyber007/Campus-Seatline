@@ -1,6 +1,6 @@
 import { app } from './src/app.js'
 import {
-  getDb, occupancyOf, effectiveStopIdsForUser, resetDatabase, runDatabaseTransaction, nextId, todayKey
+  getDb, effectiveStopIdsForUser, resetDatabase, runDatabaseTransaction, nextId, todayKey
 } from './src/db.js'
 import { handleDetection, snapshot } from './src/services/occupancy.js'
 import { answerAdminQuestion, adminReadSnapshot } from './src/services/adminAssistant.js'
@@ -69,6 +69,25 @@ async function main() {
 
   const health = await call('/health')
   check('health endpoint', health.status === 200)
+
+  // Activation-time auto-holds are tested in trips-smoke. Release seed-account
+  // holds here so the legacy morning suite keeps its original zero-count fixture.
+  await runDatabaseTransaction(() => {
+    const seedUserIds = new Set(getDb().users
+      .filter(user => ['incharge@campus.edu', 'rider2@campus.edu', 'rider3@campus.edu'].includes(user.email))
+      .map(user => user.id))
+    const now = new Date().toISOString()
+    for (const report of getDb().boardingReports.filter(item =>
+      seedUserIds.has(item.userId) && item.source === 'auto' && item.state === 'soft_hold'
+    )) {
+      report.state = 'released'
+      report.releaseReason = 'legacy_smoke_fixture_reset'
+      report.releasedAt = now
+      report.updatedAt = now
+    }
+    getDb().autoHoldEvaluations = getDb().autoHoldEvaluations
+      .filter(item => !seedUserIds.has(item.userId))
+  })
 
   const meta = await call('/meta')
   check('stops seeded for pagination demo (>= 10)', meta.status === 200 && meta.data.stops.length >= 10, `got ${meta.data.stops?.length}`)
@@ -440,12 +459,14 @@ async function main() {
   }
   check('shared BLE gateway rejects a rider/stop/bus topology mismatch', invalidDetectionRejected)
 
-  const rolloverOcc = occupancyOf(newBus.data.bus.id)
-  rolloverOcc.tripDate = '1900-01-01'
-  rolloverOcc.manualAdjustment = 7
+  const tripScopedAdjustment = snapshot().find(item => item.busId === newBus.data.bus.id).manualAdjustment
+  getDb().occupancy[newBus.data.bus.id] = {
+    busId: newBus.data.bus.id, tripDate: '1900-01-01', manualAdjustment: 7,
+    lastUpdated: new Date().toISOString()
+  }
   const rolled = snapshot().find(item => item.busId === newBus.data.bus.id)
-  check('manual Incharge adjustment resets at trip-day rollover',
-    rolled.manualAdjustment === 0 && rolled.tripDate !== '1900-01-01')
+  check('legacy bus-day adjustment cannot carry into the active Trip',
+    rolled.manualAdjustment === tripScopedAdjustment && rolled.tripDate !== '1900-01-01' && Boolean(rolled.tripId))
 
   const blankName = await call('/admin/users', {
     method: 'POST', token: adminTok,

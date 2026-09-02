@@ -2,8 +2,8 @@ import {
   getDb, userById, busByIdIncludingArchived, stopByIdIncludingArchived
 } from '../db.js'
 
-function tripLabel(tripDate) {
-  return tripDate ? ` · trip ${tripDate}` : ''
+function tripLabel(tripDate, tripDirection) {
+  return tripDate ? ` · ${tripDirection || 'morning'} trip ${tripDate}` : ''
 }
 
 export function auditSnapshot() {
@@ -16,11 +16,14 @@ export function auditSnapshot() {
       kind: 'report_attempt',
       timestamp: a.timestamp,
       actor: userById(a.userId)?.name || a.userId,
+      tripId: a.tripId || null,
+      tripDate: a.tripDate,
+      tripDirection: a.tripDirection || 'morning',
       outcome: a.outcome,
       detail: `${a.channel} "${String(a.requested).toUpperCase()}" → ${a.outcome}` +
         ` · Bus ${busByIdIncludingArchived(a.busId)?.name || a.busId}` +
         (a.stopId ? ` · Stop ${stopByIdIncludingArchived(a.stopId)?.name || a.stopId}` : '') +
-        tripLabel(a.tripDate) +
+        tripLabel(a.tripDate, a.tripDirection) +
         (a.message ? ` — ${a.message}` : '')
     })
   }
@@ -30,6 +33,9 @@ export function auditSnapshot() {
       id: e.id,
       kind: 'arrival_event',
       timestamp: e.timestamp,
+      tripId: e.tripId || null,
+      tripDate: e.tripDate,
+      tripDirection: e.tripDirection || 'morning',
       actor: e.inferred
         ? 'System inference'
         : e.confirmedByUserIds.map(id => userById(id)?.name || id).join(', ') || 'unknown',
@@ -37,10 +43,10 @@ export function auditSnapshot() {
       detail: e.inferred
         ? `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} inferred past Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
           ` after confirmation at ${stopByIdIncludingArchived(e.inferredFromStopId)?.name || e.inferredFromStopId}` +
-          tripLabel(e.tripDate)
+          tripLabel(e.tripDate, e.tripDirection)
         : `Bus ${busByIdIncludingArchived(e.busId)?.name || e.busId} confirmed at Stop ${stopByIdIncludingArchived(e.stopId)?.name || e.stopId}` +
           ` (${e.confirmedByUserIds.length} confirmation${e.confirmedByUserIds.length === 1 ? '' : 's'})` +
-          tripLabel(e.tripDate)
+          tripLabel(e.tripDate, e.tripDirection)
     })
   }
 
@@ -49,10 +55,13 @@ export function auditSnapshot() {
       id: o.id,
       kind: 'incharge_override',
       timestamp: o.timestamp,
+      tripId: o.tripId || null,
+      tripDate: o.tripDate,
+      tripDirection: o.tripDirection || 'morning',
       actor: userById(o.inchargeId)?.name || o.inchargeId,
       detail: `Bus ${busByIdIncludingArchived(o.busId)?.name || o.busId}: Seats Available ${o.previousAvailable} → ${o.newAvailable}` +
         ` (Seats Occupied derived ${o.previousOccupied} → ${o.newOccupied})` +
-        tripLabel(o.tripDate)
+        tripLabel(o.tripDate, o.tripDirection)
     })
   }
 
@@ -83,12 +92,34 @@ export function auditSnapshot() {
       id: event.id,
       kind: 'unmet_demand',
       timestamp: event.timestamp,
+      tripId: event.tripId || null,
+      tripDate: event.tripDate,
+      tripDirection: event.tripDirection || 'morning',
       actor: userById(event.userId)?.name || event.userId,
       outcome: event.hadAlternateBus ? 'had_alternative' : 'stranded',
       detail: `Could not get a seat on Bus ${busByIdIncludingArchived(event.busId)?.name || event.busId}` +
         ` at Stop ${stopByIdIncludingArchived(event.stopId)?.name || event.stopId}` +
         (event.hadAlternateBus ? ' · alternate bus available' : ' · no alternate bus available') +
-        tripLabel(event.tripDate)
+        tripLabel(event.tripDate, event.tripDirection)
+    })
+  }
+
+  for (const closure of db.tripClosures) {
+    const trip = db.trips.find(item => item.id === closure.tripId)
+    items.push({
+      id: closure.id,
+      kind: 'trip_closed',
+      timestamp: closure.timestamp,
+      actor: 'System clock',
+      tripId: closure.tripId,
+      tripDate: trip?.date || null,
+      tripDirection: trip?.direction || null,
+      outcome: closure.reason,
+      detail: `${trip?.direction || 'Trip'} trip for Bus ${busByIdIncludingArchived(trip?.busId)?.name || trip?.busId || 'unknown'}` +
+        ` force-closed · Seats Occupied ${closure.finalSeatsOccupied}` +
+        ` · Soft Holds ${closure.finalSoftHolds}` +
+        ` · unresolved holds ${closure.unresolvedSoftHolds}` +
+        tripLabel(trip?.date, trip?.direction)
     })
   }
 

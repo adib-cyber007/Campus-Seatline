@@ -2,14 +2,16 @@ import { getDb, nextId, busByIdIncludingArchived, stopByIdIncludingArchived, use
 import { emitAdmins } from '../realtime.js'
 import { sendPushIfUserOffline } from './push.js'
 
-export function recordUnmetDemand({ userId, stopId, busId, channel, alternateBusIds = [] }) {
+export function recordUnmetDemand({ userId, trip = null, stopId, busId, channel, alternateBusIds = [] }) {
   const event = {
     id: nextId(),
     userId,
+    tripId: trip?.id || null,
     stopId,
     busId,
     channel,
-    tripDate: todayKey(),
+    tripDate: trip?.date || todayKey(),
+    tripDirection: trip?.direction || 'morning',
     hadAlternateBus: alternateBusIds.length > 0,
     alternateBusIds: [...new Set(alternateBusIds)],
     timestamp: new Date().toISOString()
@@ -28,6 +30,8 @@ export function recordUnmetDemand({ userId, stopId, busId, channel, alternateBus
     data: {
       event_type: 'unmet_demand_alert',
       event_id: event.id,
+      trip_id: event.tripId,
+      trip_direction: event.tripDirection,
       bus_id: busId,
       stop_id: stopId
     }
@@ -52,13 +56,15 @@ export function enrichedUnmetDemandEvents() {
 export function aggregateUnmetDemand(events = enrichedUnmetDemandEvents()) {
   const groups = new Map()
   for (const event of events) {
-    const key = `${event.stopId}:${event.busId}`
+    const key = `${event.tripDate}:${event.tripDirection}:${event.stopId}:${event.busId}`
     const group = groups.get(key) || {
       key,
       stopId: event.stopId,
       stopName: event.stopName,
       busId: event.busId,
       busName: event.busName,
+      tripDate: event.tripDate,
+      tripDirection: event.tripDirection || 'morning',
       count: 0,
       strandedCount: 0,
       hadAlternativeCount: 0,

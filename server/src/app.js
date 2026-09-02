@@ -7,10 +7,11 @@ import riderRoutes from './routes/rider.js'
 import adminRoutes from './routes/admin.js'
 import { onDetection } from './services/bleGateway.js'
 import { databaseMiddleware } from './db.js'
-import { handleDetection } from './services/occupancy.js'
-import { reconcileTripScheduleMiddleware } from './services/trips.js'
+import { ensureAutoHoldsForActiveService, handleDetection } from './services/occupancy.js'
+import { onTripActivated, reconcileTripScheduleMiddleware } from './services/trips.js'
 
 onDetection(handleDetection)
+onTripActivated(ensureAutoHoldsForActiveService)
 
 export const app = express()
 

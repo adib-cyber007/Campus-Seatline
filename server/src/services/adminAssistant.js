@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { getDb, busById, stopById, todayKey, userById } from '../db.js'
 import { auditSnapshot } from './audit.js'
 import { enrichedUnmetDemandEvents } from './unmetDemand.js'
+import { activeTripForBus, countsForTrip } from './trips.js'
 
 const DEFAULT_MODEL = 'openai/gpt-5.4-mini'
 const WRITE_VERBS = '(?:create|add|delete|remove|edit|update|change|set|assign|reassign|revoke|grant|modify|write|adjust)'
@@ -19,6 +20,7 @@ function localUnmetDemandAnswer(question) {
   const clean = String(question || '').toLowerCase()
   const isDemandQuestion = /unmet demand|insufficient seats?|unable to (?:get|find|board)|could not (?:get|find|board)|couldn't (?:get|find|board)|stranded|no alternate/.test(clean)
   if (!isDemandQuestion) return null
+  const direction = /\bevening\b/.test(clean) ? 'evening' : /\bmorning\b/.test(clean) ? 'morning' : null
 
   const now = new Date()
   let periodLabel = 'in the recorded history'
@@ -32,11 +34,13 @@ function localUnmetDemandAnswer(question) {
   }
 
   const events = enrichedUnmetDemandEvents().filter(event =>
-    !since || (since.length === 10 ? event.tripDate === since : String(event.timestamp) >= since)
+    (!direction || event.tripDirection === direction) &&
+    (!since || (since.length === 10 ? event.tripDate === since : String(event.timestamp) >= since))
   )
+  const directionLabel = direction ? ` on ${direction} trips` : ''
   if (events.length === 0) {
     return {
-      answer: `No insufficient-seat events were recorded ${periodLabel}.`,
+      answer: `No insufficient-seat events were recorded ${periodLabel}${directionLabel}.`,
       refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
     }
   }
@@ -52,7 +56,7 @@ function localUnmetDemandAnswer(question) {
   if (/which stop|most|highest|top/.test(clean)) {
     const top = stops[0]
     return {
-      answer: `${top.stopName} had the most unmet demand ${periodLabel}: ${top.count} rejected report${top.count === 1 ? '' : 's'}, including ${top.stranded} stranded rider${top.stranded === 1 ? '' : 's'}.`,
+      answer: `${top.stopName} had the most unmet demand ${periodLabel}${directionLabel}: ${top.count} rejected report${top.count === 1 ? '' : 's'}, including ${top.stranded} stranded rider${top.stranded === 1 ? '' : 's'}.`,
       refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
     }
   }
@@ -62,7 +66,7 @@ function localUnmetDemandAnswer(question) {
     `- ${item.stopName}: ${item.count} event${item.count === 1 ? '' : 's'} · ${item.stranded} stranded`
   )
   return {
-    answer: `${events.length} insufficient-seat event${events.length === 1 ? ' was' : 's were'} recorded ${periodLabel}; ${stranded} left the rider without an alternate bus.\n${lines.join('\n')}`,
+    answer: `${events.length} insufficient-seat event${events.length === 1 ? ' was' : 's were'} recorded ${periodLabel}${directionLabel}; ${stranded} left the rider without an alternate bus.\n${lines.join('\n')}`,
     refused: false, unresolved: false, model: 'local-read-only', generatedAt: now.toISOString()
   }
 }
@@ -75,17 +79,13 @@ export function adminReadSnapshot() {
   const tripDate = todayKey()
   const activeAssignments = db.inchargeAssignments.filter(item => !item.revokedAt)
   const occupancy = db.buses.filter(bus => bus.active !== false).map(bus => {
-    const reports = db.boardingReports.filter(item => item.busId === bus.id && item.tripDate === tripDate)
-    const baseOccupied = reports.filter(item => item.state === 'seats_occupied').length
-    const softHolds = reports.filter(item => item.state === 'soft_hold').length
-    const stored = db.occupancy[bus.id]
-    const manualAdjustment = stored?.tripDate === tripDate ? stored.manualAdjustment : 0
-    const seatsOccupied = Math.min(bus.capacity, Math.max(0, baseOccupied + manualAdjustment))
+    const trip = activeTripForBus(bus.id)
+    const counts = trip ? countsForTrip(trip) : { seatsOccupied: 0, softHolds: 0, availableSeats: 0 }
     return {
       busId: bus.id,
-      seatsOccupied,
-      softHolds,
-      availableSeats: Math.min(bus.capacity, Math.max(0, bus.capacity - seatsOccupied - softHolds))
+      seatsOccupied: counts.seatsOccupied,
+      softHolds: counts.softHolds,
+      availableSeats: counts.availableSeats
     }
   })
 

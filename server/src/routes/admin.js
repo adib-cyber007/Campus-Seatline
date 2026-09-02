@@ -10,6 +10,7 @@ import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
 import { beaconIdentityForBus } from '../beaconIdentity.js'
 import { enrichedUnmetDemandEvents, aggregateUnmetDemand } from '../services/unmetDemand.js'
+import { validateTripDirection } from '../services/trips.js'
 
 const router = Router()
 router.use(authenticate, requireRole('admin'))
@@ -59,6 +60,18 @@ function refreshClients(reason) {
   emitAll('refresh', { reason })
 }
 
+function validTime(value) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(value || ''))
+}
+
+function tripFilter(items, query) {
+  const direction = validateTripDirection(query.direction) ? query.direction : null
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(query.from || '')) ? String(query.from) : null
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(query.to || '')) ? String(query.to) : null
+  return items.filter(item => (!direction || item.tripDirection === direction) &&
+    (!from || item.tripDate >= from) && (!to || item.tripDate <= to))
+}
+
 router.get('/overview', (req, res) => {
   const db = getDb()
   const stops = activeStops().map(stop => ({
@@ -66,7 +79,8 @@ router.get('/overview', (req, res) => {
     busIds: stop.busIds.filter(id => Boolean(busById(id))),
     riderCount: riderCountForStop(stop.id)
   }))
-  const unmetDemandEvents = enrichedUnmetDemandEvents()
+  const unmetDemandEvents = tripFilter(enrichedUnmetDemandEvents(), req.query)
+  const audit = tripFilter(auditSnapshot(), req.query)
   res.json({
     stops,
     buses: activeBuses().map(b => ({
@@ -84,12 +98,51 @@ router.get('/overview', (req, res) => {
     })),
     assignments: db.inchargeAssignments.map(enrichAssignment),
     occupancy: snapshot(),
+    trips: db.trips.map(trip => ({
+      ...trip,
+      busName: busByIdIncludingArchived(trip.busId)?.name || trip.busId,
+      stopNames: trip.stopSequence.map(id => stopByIdIncludingArchived(id)?.name || id),
+      boardingStopNames: trip.boardingStopSet.map(id => stopByIdIncludingArchived(id)?.name || id)
+    })),
+    operatingCalendar: db.operatingCalendar,
     unmetDemand: {
       events: unmetDemandEvents,
       summary: aggregateUnmetDemand(unmetDemandEvents)
     },
-    audit: auditSnapshot()
+    audit
   })
+})
+router.put('/operating-calendar', (req, res) => {
+  const serviceWeekdays = Array.isArray(req.body?.serviceWeekdays)
+    ? [...new Set(req.body.serviceWeekdays.map(Number))].sort((a, b) => a - b)
+    : null
+  const exceptions = Array.isArray(req.body?.exceptions) ? req.body.exceptions : null
+  if (!serviceWeekdays || serviceWeekdays.some(day => !Number.isInteger(day) || day < 1 || day > 7)) {
+    return res.status(400).json({ error: 'serviceWeekdays must contain unique weekday numbers from 1 (Monday) to 7 (Sunday)' })
+  }
+  if (!exceptions || exceptions.some(item =>
+    !/^\d{4}-\d{2}-\d{2}$/.test(String(item?.date || '')) || typeof item?.service !== 'boolean'
+  )) {
+    return res.status(400).json({ error: 'Each exception requires a YYYY-MM-DD date and boolean service value' })
+  }
+  const duplicateDates = exceptions.map(item => item.date)
+  if (new Set(duplicateDates).size !== duplicateDates.length) {
+    return res.status(400).json({ error: 'Operating Calendar exception dates must be unique' })
+  }
+  const now = new Date().toISOString()
+  getDb().operatingCalendar = {
+    serviceWeekdays,
+    exceptions: exceptions.map(item => ({
+      date: item.date,
+      service: item.service,
+      note: String(item.note || '').trim(),
+      createdAt: item.createdAt || now,
+      updatedAt: now,
+      updatedByAdminId: req.user.id
+    }))
+  }
+  refreshClients('operating-calendar-updated')
+  res.json({ operatingCalendar: getDb().operatingCalendar })
 })
 router.post('/assistant/query', async (req, res) => {
   try {
@@ -143,8 +196,7 @@ router.delete('/users/:id', (req, res) => {
   }
 
   const activeReports = db.boardingReports.filter(report =>
-    report.userId === user.id && report.tripDate === todayKey() &&
-    ['soft_hold', 'seats_occupied'].includes(report.state)
+    report.userId === user.id && ['soft_hold', 'seats_occupied'].includes(report.state)
   )
   if (activeReports.length > 0) {
     return res.status(409).json({
@@ -259,16 +311,23 @@ router.put('/stops/:id', (req, res) => {
 })
 
 router.post('/buses', (req, res) => {
-  const { name, capacity, stopIds } = req.body || {}
+  const { name, capacity, stopIds, morningStartTime, eveningStartTime } = req.body || {}
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Bus name required' })
   const cap = Number(capacity)
   if (!Number.isInteger(cap) || cap <= 0) return res.status(400).json({ error: 'Capacity must be a positive integer' })
   const ids = Array.isArray(stopIds) ? [...new Set(stopIds)] : []
   if (ids.some(id => !stopById(id))) return res.status(400).json({ error: 'Unknown stop in path' })
+  const morning = morningStartTime || (process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '00:00' : '07:00')
+  const evening = eveningStartTime || (process.env.SEATLINE_TEST_SCHEMA === 'seatline_test' ? '23:59' : '17:00')
+  if (!validTime(morning) || !validTime(evening) || morning >= evening) {
+    return res.status(400).json({ error: 'Valid Morning and Evening start times are required, with Morning earlier than Evening' })
+  }
 
   const id = nextId()
   const bus = {
     id, name: String(name).trim(), capacity: cap, stopIds: ids, active: true,
+    morningStartTime: morning,
+    eveningStartTime: evening,
     beacon: beaconIdentityForBus(id)
   }
   getDb().buses.push(bus)
@@ -280,7 +339,13 @@ router.post('/buses', (req, res) => {
 router.put('/buses/:id', (req, res) => {
   const bus = busById(req.params.id)
   if (!bus) return res.status(404).json({ error: 'Bus not found' })
-  const { name, capacity, stopIds } = req.body || {}
+  const { name, capacity, stopIds, morningStartTime, eveningStartTime } = req.body || {}
+  const proposedMorning = morningStartTime ?? bus.morningStartTime
+  const proposedEvening = eveningStartTime ?? bus.eveningStartTime
+  if ((morningStartTime !== undefined || eveningStartTime !== undefined) &&
+    (!validTime(proposedMorning) || !validTime(proposedEvening) || proposedMorning >= proposedEvening)) {
+    return res.status(400).json({ error: 'Valid Morning and Evening start times are required, with Morning earlier than Evening' })
+  }
   if (name !== undefined) {
     if (!String(name).trim()) return res.status(400).json({ error: 'Bus name cannot be empty' })
     bus.name = String(name).trim()
@@ -303,6 +368,10 @@ router.put('/buses/:id', (req, res) => {
     if (ids.some(id => !stopById(id))) return res.status(400).json({ error: 'Unknown stop in path' })
     bus.stopIds = ids
     syncBusStopLinks(bus)
+  }
+  if (morningStartTime !== undefined || eveningStartTime !== undefined) {
+    bus.morningStartTime = proposedMorning
+    bus.eveningStartTime = proposedEvening
   }
   refreshClients('bus-updated')
   res.json({ bus })
@@ -328,7 +397,7 @@ function stopArchiveDependencies(stop) {
       user.active !== false && user.role === 'rider' && user.stopIds.includes(stop.id)
     ).length,
     activeReports: db.boardingReports.filter(item =>
-      item.stopId === stop.id && item.tripDate === tripDate && ['soft_hold', 'seats_occupied'].includes(item.state)
+      item.stopId === stop.id && ['soft_hold', 'seats_occupied'].includes(item.state)
     ).length,
     pendingPrompts: db.prompts.filter(item => item.stopId === stop.id && item.status === 'pending').length,
     dailyOverrides: db.dailyStopOverrides.filter(item => item.stopId === stop.id && item.tripDate === tripDate).length,

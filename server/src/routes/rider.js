@@ -2,7 +2,7 @@ import { Router } from 'express'
 import {
   getDb, busById, stopById, busesForStops, sanitizeUser, riderAuthorityBusIds, activeAssignments,
   effectiveStopIdsForUser, dailyStopOverrideForUser, setDailyStopOverride, clearDailyStopOverride,
-  pushNotification, upsertDeviceToken, deactivateDeviceToken, activeStops
+  pushNotification, upsertDeviceToken, deactivateDeviceToken, activeStops, todayKey
 } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
 import {
@@ -13,6 +13,7 @@ import {
 import { submitDetection } from '../services/bleGateway.js'
 import { emitToUser } from '../realtime.js'
 import { normalizeServiceUuid } from '../beaconIdentity.js'
+import { activeTripForBus, isServiceDate } from '../services/trips.js'
 
 const router = Router()
 router.use(authenticate, requireRole('rider'))
@@ -106,7 +107,9 @@ router.get('/overview', (req, res) => {
           : (stopById(a.stopId)?.name || a.stopId),
         grantedAt: a.grantedAt
       })),
-    notifications: db.notifications.filter(n => n.userId === user.id).slice(-20).reverse()
+    notifications: db.notifications.filter(n => n.userId === user.id).slice(-20).reverse(),
+    serviceDay: isServiceDate(todayKey()),
+    activeTripDirection: buses.find(bus => bus.tripStatus === 'active')?.tripDirection || null
   })
 })
 
@@ -140,7 +143,11 @@ router.post('/soft-hold/release', (req, res) => {
 function cancelPromptsOutsideEffectiveStop(user) {
   const effectiveStopIds = effectiveStopIdsForUser(user)
   for (const prompt of getDb().prompts) {
-    if (prompt.userId === user.id && prompt.status === 'pending' && !effectiveStopIds.includes(prompt.stopId)) {
+    const trip = getDb().trips.find(item => item.id === prompt.tripId)
+    const compatible = trip?.direction === 'evening'
+      ? trip.stopSequence.some(stopId => effectiveStopIds.includes(stopId))
+      : effectiveStopIds.includes(prompt.stopId)
+    if (prompt.userId === user.id && prompt.status === 'pending' && !compatible) {
       prompt.status = 'cancelled'
     }
   }
@@ -225,12 +232,14 @@ function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) 
   }
   const bus = requireBeacon ? mappedBus : busById(busId)
   if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  const trip = activeTripForBus(bus.id)
+  if (!trip) return res.status(409).json({ error: `No active trip for ${bus.name}` })
   const candidates = effectiveStopIdsForUser(req.user).filter(s => bus.stopIds.includes(s))
   if (candidates.length === 0) {
     return res.status(403).json({ error: 'Bus does not pass your effective stop today' })
   }
   const resolvedStopId = stopId && candidates.includes(stopId) ? stopId : candidates[0]
-  if (hasBoardedToday(req.user.id, bus.id)) {
+  if (hasBoardedToday(req.user.id, bus.id) && trip.direction !== 'evening') {
     logRejectedBoarded({ userId: req.user.id, busId: bus.id, stopId: resolvedStopId, channel: 'ble_confirmed' })
     return res.status(409).json({ error: `You've already been counted as boarded on ${bus.name} for this trip — one report per rider per trip` })
   }
@@ -244,6 +253,9 @@ function handleBleDetectionRequest(req, res, { source, requireBeacon = false }) 
   })
   if (!prompt) {
     return res.status(409).json({ error: 'You have already been counted as boarded for this trip' })
+  }
+  if (prompt.alighted) {
+    return res.json({ ok: true, source: detectionSource, alighted: true, prompts: [] })
   }
   return res.json({ ok: true, source: detectionSource, prompts: promptsForUser(req.user.id) })
 }
