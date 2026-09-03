@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useState } from 'react'
 import { api, getToken, setToken } from './api'
 import { connectSocket } from './socket'
+import { applyTheme, readTheme, saveTheme, THEMES } from './theme'
 import LoginPage from './components/LoginPage'
 import RiderPage from './components/RiderPage'
 import AdminPage from './components/AdminPage'
@@ -29,6 +30,12 @@ export default function App() {
   const [refreshTick, setRefreshTick] = useState(0)
   const [connectionStatus, setConnectionStatus] = useState('connecting')
   const [loggingOut, setLoggingOut] = useState(false)
+  const [theme, setTheme] = useState(readTheme)
+
+  useLayoutEffect(() => {
+    applyTheme(theme)
+    saveTheme(theme)
+  }, [theme])
 
   const toast = useCallback((message, type = 'info') => {
     const id = Math.random().toString(36).slice(2)
@@ -125,6 +132,19 @@ export default function App() {
             <strong>{user.name}</strong>
             <span>{user.role === 'admin' ? 'Transport admin' : 'Rider'}</span>
           </span>
+          <button
+            type="button"
+            className="theme-toggle"
+            aria-pressed={theme === THEMES.DARK}
+            aria-label={`Switch to ${theme === THEMES.DARK ? 'light' : 'dark'} mode`}
+            title={`Switch to ${theme === THEMES.DARK ? 'light' : 'dark'} mode`}
+            onClick={() => setTheme(current => current === THEMES.DARK ? THEMES.LIGHT : THEMES.DARK)}
+          >
+            <span className="theme-toggle-icon" aria-hidden="true">
+              {theme === THEMES.DARK ? '☀' : '◐'}
+            </span>
+            <span>{theme === THEMES.DARK ? 'Dark' : 'Light'}</span>
+          </button>
           <button className="btn quiet logout" disabled={loggingOut} onClick={logout} aria-label="Log out">
             {loggingOut ? 'Logging out…' : 'Log out'}
           </button>
