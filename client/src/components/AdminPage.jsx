@@ -97,18 +97,21 @@ function OverviewTab({ data, occupancy }) {
       />
       <div className="table-wrap"><table>
         <thead>
-          <tr><th>Bus</th><th>Availability</th><th>Occupied</th><th>Soft Holds</th><th>Capacity</th><th>Correction</th><th>Updated</th></tr>
+          <tr><th>Bus</th><th>Trip</th><th>Availability</th><th>Occupied</th><th>Soft Holds</th><th>Capacity</th><th>Correction</th><th>Updated</th></tr>
         </thead>
         <tbody>
           {data.buses.map(b => {
             const o = occFor(b)
             const adj = o.manualAdjustment ?? 0
-            const available = o.availableSeats ?? b.capacity
-            const state = available === 0 ? 'full' : available / (o.capacity || b.capacity) <= .25 ? 'tight' : 'open'
+            const tripActive = o.tripStatus === 'active'
+            const available = tripActive ? (o.availableSeats ?? b.capacity) : null
+            const state = available === 0 ? 'full' : available !== null && available / (o.capacity || b.capacity) <= .25 ? 'tight' : 'open'
+            const path = o.stopSequence?.length ? o.stopSequence : b.stopIds
             return (
               <tr key={b.id}>
-                <td className="bus-route-cell"><strong className="bus-name-cell">{b.name}</strong><RouteLine stopIds={b.stopIds} stops={data.stops} label={b.name} /></td>
-                <td className="numeric-cell"><span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span></td>
+                <td className="bus-route-cell"><strong className="bus-name-cell">{b.name}</strong><RouteLine stopIds={path} stops={data.stops} label={`${b.name} ${o.tripDirection || ''}`} /></td>
+                <td><strong className="trip-direction">{o.tripDirection || 'No trip'}</strong><small>{o.tripStatus === 'active' ? `${o.tripDate} · in service` : o.tripStatus === 'scheduled' ? `${o.tripDate} · scheduled` : 'Not scheduled today'}</small></td>
+                <td className="numeric-cell">{tripActive ? <span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span> : <span className="subtle">—</span>}</td>
                 <td className="numeric-cell">{o.seatsOccupied ?? 0}</td>
                 <td className="numeric-cell">{o.softHolds ?? 0}</td>
                 <td className="numeric-cell">{o.capacity ?? b.capacity}</td>
@@ -459,6 +462,7 @@ function BusesTab({ data, reload, toast }) {
                 <button className="btn secondary" onClick={() => setEditingId(b.id)}>Edit bus</button>
               </div>
               <div className="management-meta">
+                <span className="service-times"><strong>{b.morningStartTime}</strong> morning <span aria-hidden="true">/</span> <strong>{b.eveningStartTime}</strong> evening</span>
                 {b.inchargeNames.length
                   ? <span className="status-label covered"><span aria-hidden="true">✓</span>{b.inchargeNames.join(', ')}</span>
                   : <span className="status-label attention"><span aria-hidden="true">!</span>No Incharge coverage</span>}
@@ -481,13 +485,17 @@ function NewBus({ data, reload, toast }) {
   const [name, setName] = useState('')
   const [capacity, setCapacity] = useState(30)
   const [stopIds, setStopIds] = useState([])
+  const [morningStartTime, setMorningStartTime] = useState('07:00')
+  const [eveningStartTime, setEveningStartTime] = useState('17:00')
   const [busy, setBusy] = useState(false)
 
   const create = async () => {
     if (busy) return
     setBusy(true)
     try {
-      await api('/admin/buses', { method: 'POST', body: { name, capacity: Number(capacity), stopIds } })
+      await api('/admin/buses', {
+        method: 'POST', body: { name, capacity: Number(capacity), stopIds, morningStartTime, eveningStartTime }
+      })
       setName(''); setCapacity(30); setStopIds([])
       toast('Bus created', 'feedback'); reload()
     } catch (e) { toast(e.message, 'error') }
@@ -501,6 +509,10 @@ function NewBus({ data, reload, toast }) {
         <label className="field-label">Bus name or number<input placeholder="e.g. Shuttle-03" value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="field-label">Seat capacity<input type="number" min="1" value={capacity} onChange={e => setCapacity(e.target.value)} /></label>
       </div>
+      <div className="form-grid two trip-time-fields">
+        <label className="field-label">Morning trip starts<input type="time" value={morningStartTime} onChange={e => setMorningStartTime(e.target.value)} /></label>
+        <label className="field-label">Evening trip starts<input type="time" value={eveningStartTime} onChange={e => setEveningStartTime(e.target.value)} /></label>
+      </div>
       <OrderedStopPicker all={data.stops} value={stopIds} onChange={setStopIds} />
       <p className="field-help">Incharge authority is granted to a rider after the bus is created.</p>
       <button className="btn primary" disabled={!name.trim() || busy} onClick={create}>{busy ? <><span className="spinner" /> Creating</> : 'Create bus'}</button>
@@ -512,6 +524,8 @@ function EditBus({ bus, data, done, toast }) {
   const [name, setName] = useState(bus.name)
   const [capacity, setCapacity] = useState(bus.capacity)
   const [stopIds, setStopIds] = useState(bus.stopIds)
+  const [morningStartTime, setMorningStartTime] = useState(bus.morningStartTime || '07:00')
+  const [eveningStartTime, setEveningStartTime] = useState(bus.eveningStartTime || '17:00')
   const [busy, setBusy] = useState('')
 
   const save = async () => {
@@ -520,7 +534,7 @@ function EditBus({ bus, data, done, toast }) {
     try {
       await api(`/admin/buses/${bus.id}`, {
         method: 'PUT',
-        body: { name, capacity: Number(capacity), stopIds }
+        body: { name, capacity: Number(capacity), stopIds, morningStartTime, eveningStartTime }
       })
       toast('Bus saved', 'feedback'); done()
     } catch (e) { toast(e.message, 'error') }
@@ -543,6 +557,10 @@ function EditBus({ bus, data, done, toast }) {
       <div className="form-grid two">
         <label className="field-label">Bus name or number<input value={name} onChange={e => setName(e.target.value)} /></label>
         <label className="field-label">Seat capacity<input type="number" min="1" value={capacity} onChange={e => setCapacity(e.target.value)} /></label>
+      </div>
+      <div className="form-grid two trip-time-fields">
+        <label className="field-label">Morning trip starts<input type="time" value={morningStartTime} onChange={e => setMorningStartTime(e.target.value)} /></label>
+        <label className="field-label">Evening trip starts<input type="time" value={eveningStartTime} onChange={e => setEveningStartTime(e.target.value)} /></label>
       </div>
       <BeaconPassport beacon={bus.beacon} />
       <OrderedStopPicker all={data.stops} value={stopIds} onChange={setStopIds} />
@@ -759,12 +777,125 @@ function UsersTab({ data, reload, toast }) {
   )
 }
 
+const weekdayOptions = [
+  [1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'],
+  [5, 'Friday'], [6, 'Saturday'], [7, 'Sunday']
+]
+
+function ScheduleTab({ data, reload, toast }) {
+  const [serviceWeekdays, setServiceWeekdays] = useState(data.operatingCalendar?.serviceWeekdays || [1, 2, 3, 4, 5])
+  const [exceptions, setExceptions] = useState(data.operatingCalendar?.exceptions || [])
+  const [busy, setBusy] = useState(false)
+  const today = localDateKey()
+  const todayTrips = (data.trips || []).filter(trip => trip.date === today)
+
+  useEffect(() => {
+    setServiceWeekdays(data.operatingCalendar?.serviceWeekdays || [1, 2, 3, 4, 5])
+    setExceptions(data.operatingCalendar?.exceptions || [])
+  }, [data.operatingCalendar])
+
+  const toggleWeekday = day => setServiceWeekdays(current =>
+    current.includes(day) ? current.filter(item => item !== day) : [...current, day].sort((a, b) => a - b)
+  )
+  const addException = () => setExceptions(current => [
+    ...current,
+    { date: '', service: false, note: '' }
+  ])
+  const updateException = (index, patch) => setExceptions(current =>
+    current.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item)
+  )
+  const removeException = index => setExceptions(current => current.filter((_, itemIndex) => itemIndex !== index))
+  const save = async () => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await api('/admin/operating-calendar', {
+        method: 'PUT',
+        body: {
+          serviceWeekdays,
+          exceptions: exceptions.map(item => ({ date: item.date, service: item.service, note: item.note }))
+        }
+      })
+      toast('Operating Calendar saved', 'feedback')
+      reload()
+    } catch (error) { toast(error.message, 'error') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <>
+      <section className="card wide admin-section schedule-board">
+        <SectionHeading
+          eyebrow="Today’s dispatch board"
+          title="Morning and evening trips"
+          description="Trips activate from each bus clock. Reaching the final stop is never used as an activation gate."
+        />
+        <div className="table-wrap"><table>
+          <thead><tr><th>Bus</th><th>Direction</th><th>Start</th><th>Status</th><th>Stop sequence</th><th>Boarding stops</th></tr></thead>
+          <tbody>
+            {todayTrips.map(trip => {
+              const bus = data.buses.find(item => item.id === trip.busId)
+              const start = trip.direction === 'morning' ? bus?.morningStartTime : bus?.eveningStartTime
+              return (
+                <tr key={trip.id}>
+                  <td><strong>{trip.busName}</strong></td>
+                  <td><span className={`trip-direction ${trip.direction}`}>{trip.direction}</span></td>
+                  <td className="numeric-cell">{start || '—'}</td>
+                  <td><span className={`trip-state ${trip.status}`}>{trip.status.replace('_', ' ')}</span></td>
+                  <td><RouteLine stopIds={trip.stopSequence} stops={data.stops} label={`${trip.busName} ${trip.direction}`} /></td>
+                  <td>{trip.boardingStopNames.join(', ') || <span className="subtle">None</span>}</td>
+                </tr>
+              )
+            })}
+            {todayTrips.length === 0 && <tr><td colSpan="6"><div className="empty-inline"><span aria-hidden="true">○</span><p>No trips scheduled today.</p></div></td></tr>}
+          </tbody>
+        </table></div>
+      </section>
+
+      <section className="card wide admin-section calendar-editor">
+        <SectionHeading
+          eyebrow="Service-day rules"
+          title="Operating Calendar"
+          description="The weekly pattern decides which dates generate trips. Exceptions override one date for holidays and makeup days."
+        />
+        <fieldset className="weekday-picker">
+          <legend>Default service days</legend>
+          {weekdayOptions.map(([day, label]) => (
+            <label key={day} className={serviceWeekdays.includes(day) ? 'selected' : ''}>
+              <input type="checkbox" checked={serviceWeekdays.includes(day)} onChange={() => toggleWeekday(day)} />
+              <span>{label}</span>
+            </label>
+          ))}
+        </fieldset>
+
+        <div className="calendar-exceptions">
+          <div className="calendar-exceptions-head">
+            <div><h3>Date exceptions</h3><p>Force service on or off for a specific date.</p></div>
+            <button type="button" className="btn secondary" onClick={addException}>Add date</button>
+          </div>
+          {exceptions.map((item, index) => (
+            <div className="calendar-exception-row" key={`${item.date}-${index}`}>
+              <label className="field-label">Date<input type="date" value={item.date} onChange={event => updateException(index, { date: event.target.value })} /></label>
+              <label className="field-label">Service<select value={item.service ? 'on' : 'off'} onChange={event => updateException(index, { service: event.target.value === 'on' })}><option value="off">No service</option><option value="on">Run service</option></select></label>
+              <label className="field-label exception-note">Reason<input value={item.note || ''} placeholder="Holiday or makeup day" onChange={event => updateException(index, { note: event.target.value })} /></label>
+              <button type="button" className="btn danger-quiet" aria-label={`Remove exception ${item.date || index + 1}`} onClick={() => removeException(index)}>Remove</button>
+            </div>
+          ))}
+          {exceptions.length === 0 && <div className="empty-inline"><span aria-hidden="true">○</span><p>No date exceptions configured.</p></div>}
+        </div>
+        <button className="btn primary calendar-save" disabled={busy || exceptions.some(item => !item.date)} onClick={save}>{busy ? <><span className="spinner" /> Saving</> : 'Save Operating Calendar'}</button>
+      </section>
+    </>
+  )
+}
+
 function UnmetDemandTab({ data }) {
   const today = localDateKey()
   const [dateFrom, setDateFrom] = useState(today)
   const [dateTo, setDateTo] = useState(today)
   const [stopId, setStopId] = useState('all')
   const [busId, setBusId] = useState('all')
+  const [direction, setDirection] = useState('all')
   const [status, setStatus] = useState('all')
   const [sort, setSort] = useState('stranded')
   const events = data.unmetDemand?.events || []
@@ -784,18 +915,20 @@ function UnmetDemandTab({ data }) {
     if (dateTo && event.tripDate > dateTo) return false
     if (stopId !== 'all' && event.stopId !== stopId) return false
     if (busId !== 'all' && event.busId !== busId) return false
+    if (direction !== 'all' && event.tripDirection !== direction) return false
     if (status === 'stranded' && event.hadAlternateBus) return false
     if (status === 'alternative' && !event.hadAlternateBus) return false
     return true
-  }), [events, dateFrom, dateTo, stopId, busId, status])
+  }), [events, dateFrom, dateTo, stopId, busId, direction, status])
 
   const groups = useMemo(() => {
     const grouped = new Map()
     for (const event of filteredEvents) {
-      const key = `${event.stopId}:${event.busId}`
+      const key = `${event.tripDate}:${event.tripDirection}:${event.stopId}:${event.busId}`
       const group = grouped.get(key) || {
         key, stopId: event.stopId, stopName: event.stopName,
         busId: event.busId, busName: event.busName, events: [],
+        tripDate: event.tripDate, tripDirection: event.tripDirection || 'morning',
         strandedCount: 0, alternativeCount: 0, latestAt: event.timestamp
       }
       group.events.push(event)
@@ -834,6 +967,7 @@ function UnmetDemandTab({ data }) {
           <option value="all">Bus: all</option>
           {busOptions.map(bus => <option key={bus.id} value={bus.id}>{bus.name}</option>)}
         </select></label>
+        <label><span className="sr-only">Filter unmet demand by trip direction</span><select value={direction} onChange={event => setDirection(event.target.value)}><option value="all">Trip: all</option><option value="morning">Morning trips</option><option value="evening">Evening trips</option></select></label>
         <label><span className="sr-only">Filter by alternate-bus status</span><select value={status} onChange={event => setStatus(event.target.value)}>
           <option value="all">Status: all</option>
           <option value="stranded">Stranded only</option>
@@ -852,7 +986,7 @@ function UnmetDemandTab({ data }) {
             <summary>
               <span className="demand-route">
                 <span className="demand-signal" aria-hidden="true">{group.strandedCount ? '!' : '↗'}</span>
-                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>Latest {new Date(group.latestAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small></span>
+                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>{group.tripDirection} trip · {group.tripDate} · latest {new Date(group.latestAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span>
               </span>
               <span className="demand-metrics">
                 <span><strong>{group.events.length}</strong><small>unable to board</small></span>
@@ -862,11 +996,12 @@ function UnmetDemandTab({ data }) {
               </span>
             </summary>
             <div className="table-wrap demand-detail"><table>
-              <thead><tr><th>Rider</th><th>Time</th><th>Report</th><th>Outcome context</th></tr></thead>
+              <thead><tr><th>Rider</th><th>Trip</th><th>Time</th><th>Report</th><th>Outcome context</th></tr></thead>
               <tbody>
                 {group.events.map(event => (
                   <tr key={event.id}>
                     <td><strong>{event.riderName}</strong><small>{event.riderEmail}</small></td>
+                    <td><span className={`trip-direction ${event.tripDirection}`}>{event.tripDirection || 'morning'}</span><small>{event.tripDate}</small></td>
                     <td className="subtle audit-time">{new Date(event.timestamp).toLocaleString()}</td>
                     <td>{event.channel === 'ble_confirmed' ? 'BLE confirmed' : 'Soft Hold'}</td>
                     <td>{event.hadAlternateBus
@@ -887,6 +1022,9 @@ function UnmetDemandTab({ data }) {
 function AuditTab({ data, auditFeed }) {
   const [query, setQuery] = useState('')
   const [kind, setKind] = useState('all')
+  const [direction, setDirection] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const merged = Object.values(
     [...(auditFeed || []), ...data.audit].reduce((acc, item) => {
       acc[item.id] = item
@@ -895,8 +1033,10 @@ function AuditTab({ data, auditFeed }) {
   ).sort((a, b) => String(b.timestamp).localeCompare(String(a.timestamp)))
   const visible = merged.filter(item => {
     const matchesKind = kind === 'all' || item.kind === kind
+    const matchesDirection = direction === 'all' || item.tripDirection === direction
+    const matchesDate = (!dateFrom || item.tripDate >= dateFrom) && (!dateTo || item.tripDate <= dateTo)
     const haystack = `${item.actor} ${item.detail} ${item.kind}`.toLowerCase()
-    return matchesKind && (!query.trim() || haystack.includes(query.trim().toLowerCase()))
+    return matchesKind && matchesDirection && matchesDate && (!query.trim() || haystack.includes(query.trim().toLowerCase()))
   })
   const kinds = [...new Set(merged.map(item => item.kind))]
 
@@ -906,20 +1046,24 @@ function AuditTab({ data, auditFeed }) {
       <div className="controls filter-bar">
         <label className="search-field"><span className="sr-only">Search audit trail</span><span className="search-icon" aria-hidden="true">⌕</span><input type="search" placeholder="Search actor or detail…" value={query} onChange={event => setQuery(event.target.value)} /></label>
         <label><span className="sr-only">Audit event type</span><select value={kind} onChange={event => setKind(event.target.value)}><option value="all">All event types</option>{kinds.map(item => <option key={item} value={item}>{item.replace(/_/g, ' ')}</option>)}</select></label>
+        <label><span className="sr-only">Audit trip direction</span><select value={direction} onChange={event => setDirection(event.target.value)}><option value="all">Trip: all</option><option value="morning">Morning trips</option><option value="evening">Evening trips</option></select></label>
+        <label className="dated-filter"><span>From</span><input type="date" value={dateFrom} max={dateTo || undefined} onChange={event => setDateFrom(event.target.value)} /></label>
+        <label className="dated-filter"><span>To</span><input type="date" value={dateTo} min={dateFrom || undefined} onChange={event => setDateTo(event.target.value)} /></label>
         <span className="result-count"><strong>{visible.length}</strong> events</span>
       </div>
       <div className="table-wrap"><table>
-        <thead><tr><th>Time</th><th>Type</th><th>Actor</th><th>Detail</th></tr></thead>
+        <thead><tr><th>Time</th><th>Trip</th><th>Type</th><th>Actor</th><th>Detail</th></tr></thead>
         <tbody>
           {visible.map(item => (
             <tr key={item.id}>
               <td className="subtle audit-time">{new Date(item.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+              <td>{item.tripDirection ? <><span className={`trip-direction ${item.tripDirection}`}>{item.tripDirection}</span><small>{item.tripDate}</small></> : <span className="subtle">—</span>}</td>
               <td><span className={`status-label audit-kind ${item.kind}`}>{item.kind.replace(/_/g, ' ')}</span></td>
               <td>{item.actor}</td>
               <td>{item.detail}</td>
             </tr>
           ))}
-          {visible.length === 0 && <tr><td colSpan="4" className="subtle">No audit events match this search.</td></tr>}
+          {visible.length === 0 && <tr><td colSpan="5" className="subtle">No audit events match this search.</td></tr>}
         </tbody>
       </table></div>
       <p className="privacy-note admin-note"><span aria-hidden="true">◇</span> No reputation scores, trust ratings, or mismatch flags are generated.</p>
@@ -932,7 +1076,8 @@ const assistantExamples = [
   'Show buses currently above 90% occupancy',
   'How many Soft Hold releases happened today?',
   'List Incharge assignments changed this week.',
-  'Which stop had the most unmet demand this week?'
+  'Which stop had the most unmet demand this week?',
+  'How many riders were unable to board on evening trips this week?'
 ]
 
 function AssistantTab() {
@@ -1001,7 +1146,7 @@ function AssistantTab() {
 }
 
 const adminTabs = [
-  ['overview', 'Overview'], ['stops', 'Stops'], ['buses', 'Buses'],
+  ['overview', 'Overview'], ['schedule', 'Schedule'], ['stops', 'Stops'], ['buses', 'Buses'],
   ['incharge', 'Incharge'], ['users', 'Users'], ['unmet', 'Unmet demand'], ['audit', 'Audit log'], ['assistant', 'AI assistant']
 ]
 
@@ -1049,6 +1194,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
       </nav>
       <div className="admin-content grid">
         {tab === 'overview' && <OverviewTab data={data} occupancy={occupancy} />}
+        {tab === 'schedule' && <ScheduleTab data={data} reload={load} toast={toast} />}
         {tab === 'stops' && <StopsTab data={data} reload={load} toast={toast} />}
         {tab === 'buses' && <BusesTab data={data} reload={load} toast={toast} />}
         {tab === 'incharge' && <AssignmentsTab data={data} reload={load} toast={toast} />}

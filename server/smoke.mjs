@@ -907,6 +907,11 @@ async function main() {
     localDemandAnswer.answer.includes(`${expectedTopDemandStop.count} rejected report`))
   check('local unmet-demand questions neither call a provider nor mutate data',
     JSON.stringify(getDb()) === beforeLocalDemandQuestion)
+  const eveningDemandAnswer = await answerAdminQuestion('How many riders were unable to board on evening trips this week?', {
+    generator: async () => { throw new Error('External generator must not run for direction-filtered unmet demand queries') }
+  })
+  check('local Admin assistant filters unmet demand by trip direction and date window',
+    eveningDemandAnswer.model === 'local-read-only' && eveningDemandAnswer.answer.includes('evening trips'))
 
   console.log('UPDATE 1: confirmed downstream stops infer prior crossings without changing seat state')
 
@@ -1166,6 +1171,27 @@ async function main() {
   if (priorGatewayKey) process.env.AI_GATEWAY_API_KEY = priorGatewayKey
   check('missing provider configuration produces a clear fallback, not fabrication',
     unavailableAssistant.status === 503 && unavailableAssistant.data.error.includes('not configured'))
+
+  const scheduleOverview = await call('/admin/overview', { token: adminTok })
+  check('Admin data surface exposes Trip direction/date and the Operating Calendar',
+    scheduleOverview.status === 200 && scheduleOverview.data.trips.some(item => item.direction === 'morning') &&
+    scheduleOverview.data.trips.some(item => item.direction === 'evening') &&
+    Array.isArray(scheduleOverview.data.operatingCalendar.serviceWeekdays))
+  const calendar = scheduleOverview.data.operatingCalendar
+  const savedCalendar = await call('/admin/operating-calendar', {
+    method: 'PUT', token: adminTok,
+    body: { serviceWeekdays: calendar.serviceWeekdays, exceptions: calendar.exceptions }
+  })
+  check('Admin can save the weekly service pattern and date exceptions',
+    savedCalendar.status === 200 && Array.isArray(savedCalendar.data.operatingCalendar.exceptions))
+  const scheduleBus = scheduleOverview.data.buses[0]
+  const savedTripTimes = await call(`/admin/buses/${scheduleBus.id}`, {
+    method: 'PUT', token: adminTok,
+    body: { morningStartTime: scheduleBus.morningStartTime, eveningStartTime: scheduleBus.eveningStartTime }
+  })
+  check('Admin can save Morning and Evening start times per bus',
+    savedTripTimes.status === 200 && savedTripTimes.data.bus.morningStartTime === scheduleBus.morningStartTime &&
+    savedTripTimes.data.bus.eveningStartTime === scheduleBus.eveningStartTime)
 
   const forbidden = await call('/admin/stops', { method: 'POST', token: rider, body: { name: 'Hack' } })
   check('rider blocked from admin endpoints', forbidden.status === 403)

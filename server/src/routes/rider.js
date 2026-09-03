@@ -67,13 +67,15 @@ router.get('/overview', (req, res) => {
     .filter((b, i, arr) => arr.findIndex(x => x.id === b.id) === i)
     .map(b => {
       const snap = snapshot().find(s => s.busId === b.id)
+      const displayStopIds = snap?.stopSequence?.length ? snap.stopSequence : b.stopIds
       const lastDetection = db.prompts
         .filter(prompt => prompt.userId === user.id && prompt.busId === b.id && prompt.detectionSource !== 'mock')
         .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
       return {
         ...snap,
-        stopIds: b.stopIds,
-        stopNames: b.stopIds.map(id => stopById(id)?.name || id),
+        stopIds: displayStopIds,
+        stopNames: displayStopIds.map(id => stopById(id)?.name || id),
+        boardingStopIds: snap?.boardingStopSet || [],
         passedStopIds: passedStopIdsFor(b.id),
         bleEligible: b.beacon?.active !== false,
         ...(authorityBusIds.includes(b.id) ? {
@@ -145,7 +147,9 @@ function cancelPromptsOutsideEffectiveStop(user) {
   for (const prompt of getDb().prompts) {
     const trip = getDb().trips.find(item => item.id === prompt.tripId)
     const compatible = trip?.direction === 'evening'
-      ? trip.stopSequence.some(stopId => effectiveStopIds.includes(stopId))
+      ? trip.stopSequence.some(stopId =>
+        !trip.boardingStopSet.includes(stopId) && effectiveStopIds.includes(stopId)
+      )
       : effectiveStopIds.includes(prompt.stopId)
     if (prompt.userId === user.id && prompt.status === 'pending' && !compatible) {
       prompt.status = 'cancelled'
@@ -156,7 +160,12 @@ function cancelPromptsOutsideEffectiveStop(user) {
 function releaseIncompatibleHold(user) {
   const state = tripStatesForUser(user.id).find(item => item.state === 'soft_hold')
   const bus = state ? busById(state.busId) : null
-  if (bus && !bus.stopIds.some(stopId => effectiveStopIdsForUser(user).includes(stopId))) {
+  const trip = bus ? activeTripForBus(bus.id) : null
+  const effectiveStopIds = effectiveStopIdsForUser(user)
+  const compatible = trip?.direction === 'evening'
+    ? trip.stopSequence.some(stopId => !trip.boardingStopSet.includes(stopId) && effectiveStopIds.includes(stopId))
+    : bus?.stopIds.some(stopId => effectiveStopIds.includes(stopId))
+  if (bus && !compatible) {
     releaseSoftHold(user, bus, 'daily_stop_changed')
   }
 }

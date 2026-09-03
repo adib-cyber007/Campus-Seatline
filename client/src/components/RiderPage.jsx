@@ -52,7 +52,7 @@ function availabilityState(available, capacity) {
 
 function activeBeaconTargets(buses = []) {
   return buses
-    .filter(bus => bus.bleEligible)
+    .filter(bus => bus.bleEligible && bus.tripStatus === 'active')
     .map(bus => ({ busId: bus.busId }))
 }
 
@@ -64,6 +64,7 @@ function beaconTargetSignature(targets = []) {
 }
 
 function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDrafts, busyKey, onSoft, onRelease, onAvailable }) {
+  const tripActive = occupancy.tripStatus === 'active'
   const lockedByOther = Boolean(activeIsBoarded && activeBusId !== bus.busId)
   const movingHold = Boolean(activeBusId && !activeIsBoarded && activeBusId !== bus.busId)
   const state = availabilityState(occupancy.availableSeats, occupancy.capacity)
@@ -79,6 +80,7 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       <header className="bus-card-head">
         <div>
           <h2 id={`bus-${bus.busId}`}>{bus.busName}</h2>
+          <p className="trip-service-line"><strong>{occupancy.tripDirection || 'No'}</strong> trip · {occupancy.tripStatus === 'active' ? 'in service' : occupancy.tripStatus === 'scheduled' ? 'scheduled' : 'not scheduled'}</p>
         </div>
         <div className="bus-badges">
           {bus.inchargeAuthority && <span className="status-label authority"><span aria-hidden="true">◇</span> Incharge access</span>}
@@ -102,18 +104,21 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       </div>
 
       <div className="route-section">
-        <h3 className="route-heading">Route stops</h3>
+        <h3 className="route-heading">{occupancy.tripDirection === 'evening' ? 'Evening stop sequence' : 'Morning stop sequence'}</h3>
         <ol className="route-rail" aria-label={`${bus.busName} stop sequence`}>
           {bus.stopNames.map((name, index) => {
             const passed = bus.passedStopIds.includes(bus.stopIds[index])
-            return <li key={bus.stopIds[index]} className={passed ? 'passed' : ''}><span aria-hidden="true" />{name}{passed && <small>Reported</small>}</li>
+            const boarding = bus.boardingStopIds?.includes(bus.stopIds[index])
+            return <li key={bus.stopIds[index]} className={`${passed ? 'passed' : ''} ${boarding ? 'boarding-stop' : 'alight-only'}`}><span aria-hidden="true" />{name}<small>{passed ? 'Reported' : boarding ? 'Boarding and reporting' : 'Alight only'}</small></li>
           })}
         </ol>
       </div>
 
       <div className="rider-decision">
-        {bus.boarded ? (
-          <div className="decision-state success"><span aria-hidden="true">✓</span><span><strong>You’re counted on this bus</strong><small>One confirmed report for this trip</small></span></div>
+        {!tripActive ? (
+          <div className="decision-state neutral"><span aria-hidden="true">◷</span><span><strong>This trip has not started</strong><small>Reporting opens automatically at the configured start time</small></span></div>
+        ) : bus.boarded ? (
+          <div className="decision-state success"><span aria-hidden="true">✓</span><span><strong>You’re counted on this bus</strong><small>{occupancy.tripDirection === 'evening' ? 'Keep BLE monitoring on for the alight decrement at your stop' : 'One confirmed report for this trip'}</small></span></div>
         ) : bus.holding ? (
           <div className="held-actions">
             <div className="decision-state held"><span aria-hidden="true">◷</span><span><strong>Your Soft Hold is active</strong><small>Confirm after the BLE boarding prompt appears</small></span></div>
@@ -125,7 +130,7 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
           <div className="decision-state neutral"><span aria-hidden="true">—</span><span><strong>Another bus is selected</strong><small>Only one active bus report is allowed per trip</small></span></div>
         ) : (
           <>
-            <div className="decision-copy"><strong>{movingHold ? 'Prefer this bus instead?' : 'Planning to board today?'}</strong><span>{movingHold ? 'Your current Soft Hold will move here atomically.' : 'A “Yes” reserves one Soft Hold.'}</span></div>
+            <div className="decision-copy"><strong>{movingHold ? 'Prefer this bus instead?' : `Planning to board this ${occupancy.tripDirection || ''} trip?`}</strong><span>{movingHold ? 'Your current Soft Hold will move here atomically.' : 'A “Yes” reserves one Soft Hold.'}</span></div>
             <div className="segmented-actions" aria-label={`Planning to board ${bus.busName}`}>
               <button className="btn primary" disabled={Boolean(busyKey)} onClick={() => onSoft(bus.busId, 'yes')}>
                 {busyKey === `soft-${bus.busId}` ? <><span className="spinner" /> Saving</> : movingHold ? 'Move hold here' : 'Yes, hold a seat'}
@@ -228,7 +233,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
 
   useEffect(() => {
     if (!supportsNativeBeaconScan() || !overview || !backgroundBle.active) return
-    const buses = overview.boardedBusIds?.length ? [] : overview.buses
+    const boardedEveningBusIds = new Set(overview.buses
+      .filter(bus => overview.boardedBusIds?.includes(bus.busId) && bus.tripDirection === 'evening')
+      .map(bus => bus.busId))
+    const buses = overview.boardedBusIds?.length
+      ? overview.buses.filter(bus => boardedEveningBusIds.has(bus.busId))
+      : overview.buses
     const targets = activeBeaconTargets(buses)
     const targetSignature = beaconTargetSignature(targets)
     if (targetSignature === backgroundBle.targetSignature) return
@@ -327,7 +337,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
           })
           void (async () => {
             try {
-              await api('/rider/ble/detected', {
+              const result = await api('/rider/ble/detected', {
                 method: 'POST',
                 body: {
                   busId: detection.busId,
@@ -339,8 +349,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
                   }
                 }
               })
-              toast(`${matchedBus?.busName || 'Bus'} beacon verified - boarding confirmation is ready`, 'prompt')
-              setBleScan({ active: false, message: `${matchedBus?.busName || 'Bus'} matched the server’s bus mapping` })
+              toast(result.alighted
+                ? `Alighting recorded for ${matchedBus?.busName || 'the bus'}`
+                : `${matchedBus?.busName || 'Bus'} beacon verified - boarding confirmation is ready`, result.alighted ? 'feedback' : 'prompt')
+              setBleScan({ active: false, message: result.alighted
+                ? `${matchedBus?.busName || 'Bus'} alight decrement recorded`
+                : `${matchedBus?.busName || 'Bus'} matched the server’s bus mapping` })
               await load()
             } catch (error) {
               setBleScan({ active: false, message: error.message })
@@ -378,9 +392,12 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   }
   const answerPrompt = (id, response) => run(`prompt-${id}`, async () => {
     await api(`/rider/prompts/${id}/respond`, { method: 'POST', body: { response } })
-    if (response === 'yes' && backgroundBle.active) {
+    const answeredPrompt = (prompts ?? overview?.prompts ?? []).find(prompt => prompt.id === id)
+    if (response === 'yes' && backgroundBle.active && answeredPrompt?.tripDirection !== 'evening') {
       await disableBackgroundBeaconMonitoring()
       setBackgroundBle({ active: false, targetCount: 0, targetSignature: '', message: 'Boarding confirmed; background alerts stopped' })
+    } else if (response === 'yes' && backgroundBle.active && answeredPrompt?.tripDirection === 'evening') {
+      setBackgroundBle(current => ({ ...current, message: 'Boarding confirmed; monitoring continues for your alighting stop' }))
     }
   })
 
@@ -436,11 +453,31 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
 
   if (!overview) return <div className="loading-state"><span className="spinner dark" /> Loading your buses</div>
 
+  if (!overview.serviceDay) {
+    return (
+      <div className="rider-page">
+        <header className="page-intro rider-intro">
+          <div>
+            <p className="dayline">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+            <h1>No trips scheduled today</h1>
+            <p className="supporting">The Operating Calendar marks today as a non-service day.</p>
+          </div>
+        </header>
+        <section className="no-service-board" aria-labelledby="no-service-title">
+          <span className="no-service-symbol" aria-hidden="true">○</span>
+          <div><h2 id="no-service-title">Service resumes on the next operating day</h2><p>Boarding prompts, Soft Holds, and BLE reporting are off because no Morning or Evening Trips were generated.</p></div>
+        </section>
+        <p className="privacy-footer"><span aria-hidden="true">◎</span> Seatline uses rider confirmations and BLE proximity only. No GPS or continuous location data is collected.</p>
+      </div>
+    )
+  }
+
   const livePrompts = prompts ?? overview.prompts
   const activeBusId = overview.boardedBusIds?.[0] || overview.softHoldBusIds?.[0] || null
   const activeIsBoarded = activeBusId && overview.boardedBusIds?.includes(activeBusId)
+  const activeBus = overview.buses.find(bus => bus.busId === activeBusId)
   const eligibleBleBuses = activeIsBoarded
-    ? []
+    ? (activeBus?.tripDirection === 'evening' ? [activeBus] : [])
     : overview.buses
   const beaconTargets = activeBeaconTargets(eligibleBleBuses)
   const parsedBeaconMinRssi = Number(beaconMinRssi)
@@ -497,7 +534,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
             <p>Seatline watches the buses serving your stop in the foreground or while the app is closed. Beacon identities stay private to transport Admins; no bus selection, GPS, or location permission is required.</p>
           </div>
           {eligibleBleBuses.length === 0 ? (
-            <div className="decision-state success compact"><span aria-hidden="true">✓</span><span><strong>Boarding already confirmed</strong><small>No further report is needed this trip.</small></span></div>
+            <div className={`decision-state ${activeIsBoarded ? 'success' : 'neutral'} compact`}><span aria-hidden="true">{activeIsBoarded ? '✓' : '◷'}</span><span><strong>{activeIsBoarded ? 'Boarding already confirmed' : 'No active trip beacons'}</strong><small>{activeIsBoarded ? 'No further report is needed this trip.' : 'Monitoring becomes available when a scheduled trip starts.'}</small></span></div>
           ) : (
             <>
               <div className="ble-actions">
