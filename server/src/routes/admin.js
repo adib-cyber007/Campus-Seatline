@@ -4,7 +4,7 @@ import {
   busByIdIncludingArchived, stopByIdIncludingArchived, riderCountForStop, hashPassword
 } from '../db.js'
 import { authenticate, requireRole } from '../auth.js'
-import { snapshot } from '../services/occupancy.js'
+import { activeTripRiderManifest, snapshot } from '../services/occupancy.js'
 import { auditSnapshot } from '../services/audit.js'
 import { answerAdminQuestion } from '../services/adminAssistant.js'
 import { emitAll } from '../realtime.js'
@@ -112,6 +112,15 @@ router.get('/overview', (req, res) => {
     audit
   })
 })
+
+router.get('/buses/:busId/riders', (req, res) => {
+  const bus = busById(req.params.busId)
+  if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  const manifest = activeTripRiderManifest(bus.id, req.query.state)
+  if (!manifest) return res.status(400).json({ error: 'state must be soft_hold or seats_occupied' })
+  res.json({ ...manifest, busName: bus.name })
+})
+
 router.put('/operating-calendar', (req, res) => {
   const serviceWeekdays = Array.isArray(req.body?.serviceWeekdays)
     ? [...new Set(req.body.serviceWeekdays.map(Number))].sort((a, b) => a - b)

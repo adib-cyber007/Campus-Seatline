@@ -4,6 +4,7 @@ import {
   DEFAULT_BEACON_MIN_RSSI, disableBackgroundBeaconMonitoring, enableBackgroundBeaconMonitoring,
   getBackgroundBeaconStatus, startServiceUuidScan, supportsNativeBeaconScan
 } from '../bleScanner'
+import RiderManifestDialog from './RiderManifestDialog'
 
 function fmt(ms) {
   const s = Math.max(0, Math.ceil(ms / 1000))
@@ -63,7 +64,7 @@ function beaconTargetSignature(targets = []) {
     .join('|')
 }
 
-function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDrafts, busyKey, onSoft, onRelease, onAvailable }) {
+function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDrafts, busyKey, onSoft, onRelease, onAvailable, onShowManifest }) {
   const tripActive = occupancy.tripStatus === 'active'
   const lockedByOther = Boolean(activeIsBoarded && activeBusId !== bus.busId)
   const movingHold = Boolean(activeBusId && !activeIsBoarded && activeBusId !== bus.busId)
@@ -98,8 +99,8 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
           <span><strong>{state.label}</strong><small>{state.note}</small></span>
         </div>
         <dl className="seat-breakdown">
-          <div><dt>Occupied</dt><dd>{occupancy.seatsOccupied}</dd></div>
-          <div><dt>Soft Holds</dt><dd>{occupancy.softHolds}</dd></div>
+          <div><dt>Occupied</dt><dd>{bus.inchargeAuthority && tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} occupied riders`} onClick={() => onShowManifest(bus, 'seats_occupied')}>{occupancy.seatsOccupied}</button> : occupancy.seatsOccupied}</dd></div>
+          <div><dt>Soft Holds</dt><dd>{bus.inchargeAuthority && tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} Soft Hold riders`} onClick={() => onShowManifest(bus, 'soft_hold')}>{occupancy.softHolds}</button> : occupancy.softHolds}</dd></div>
         </dl>
       </div>
 
@@ -203,6 +204,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
   const [availableDrafts, setAvailableDrafts] = useState({})
   const [stopDraft, setStopDraft] = useState('')
   const [busyKey, setBusyKey] = useState('')
+  const [manifestTarget, setManifestTarget] = useState(null)
   const scanControllerRef = useRef(null)
   const detectionHandledRef = useRef(false)
 
@@ -522,6 +524,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
             onSoft={answerSoft}
             onRelease={releaseHold}
             onAvailable={setAvailable}
+            onShowManifest={(bus, state) => setManifestTarget({ busName: bus.busName, state, endpoint: `/rider/incharge/buses/${bus.busId}/riders?state=${state}` })}
           />
         ))}
       </section>
@@ -659,6 +662,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
         <p className="authority-footnote"><span aria-hidden="true">◇</span> Your Incharge authority: {overview.myAssignments.map(item => `${item.scopeType === 'bus' ? 'Bus' : 'Stop'} · ${item.scopeName}`).join(', ')}</p>
       )}
       <p className="privacy-footer"><span aria-hidden="true">◎</span> Seatline uses rider confirmations and BLE proximity only. No GPS or continuous location data is collected.</p>
+      {manifestTarget && <RiderManifestDialog target={manifestTarget} refreshKey={refreshTick} onDismiss={() => setManifestTarget(null)} />}
     </div>
   )
 }

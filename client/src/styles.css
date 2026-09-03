@@ -1389,6 +1389,82 @@ tbody tr:hover { background: #f1efe9; }
 .calendar-save { margin: 20px 22px 22px; }
 .trip-time-fields { margin-top: 0 !important; }
 
+.count-manifest-link {
+  min-width: 34px;
+  padding: 3px 7px;
+  border: 0;
+  border-bottom: 2px solid var(--route-teal);
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  color: var(--ink-navy);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.count-manifest-link:hover { background: var(--open-soft); }
+.count-manifest-link.inverse { border-bottom-color: var(--signal-amber); color: #fff; }
+.count-manifest-link.inverse:hover { background: rgba(255,255,255,.12); }
+
+.rider-manifest {
+  width: min(560px, calc(100vw - 28px));
+  max-height: min(720px, calc(100vh - 36px));
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--ink-navy);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 24px 70px rgba(20, 33, 61, .32);
+}
+.rider-manifest::backdrop { background: rgba(20, 33, 61, .7); }
+.manifest-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px;
+  border-bottom: 5px solid var(--signal-amber);
+  background: var(--ink-navy);
+  color: #fff;
+}
+.manifest-head h2 { margin: 0; color: #fff; font-size: 1.3rem; }
+.manifest-head p { margin: 4px 0 0; color: #c6d0e1; font-size: .78rem; text-transform: capitalize; }
+.manifest-close {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.42);
+  border-radius: 4px;
+  background: transparent;
+  color: #fff;
+  font: 400 1.55rem/1 var(--font-body);
+  cursor: pointer;
+}
+.manifest-close:hover { background: rgba(255,255,255,.12); }
+.manifest-totals { display: grid; grid-template-columns: 1fr 1fr; margin: 0; border-bottom: 1px solid var(--line-strong); }
+.manifest-totals div { padding: 15px 22px; }
+.manifest-totals div + div { border-left: 1px solid var(--line-strong); }
+.manifest-totals dt { color: var(--muted); font-size: .75rem; }
+.manifest-totals dd { margin: 3px 0 0; color: var(--ink-navy); font: 700 1.45rem var(--font-data); font-variant-numeric: tabular-nums; }
+.manifest-correction { margin: 16px 22px 0; padding: 11px 12px; border-left: 4px solid var(--signal-amber); background: var(--tight-soft); color: #684209; font-size: .8rem; }
+.manifest-riders { margin: 0; padding: 10px 22px 20px; list-style: none; }
+.manifest-riders li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.manifest-riders li:last-child { border-bottom: 0; }
+.manifest-sequence { width: 10px; height: 10px; border: 2px solid var(--route-teal); border-radius: 50%; background: var(--paper); }
+.manifest-riders strong, .manifest-riders small { display: block; }
+.manifest-riders strong { color: var(--ink-navy); }
+.manifest-riders small { margin-top: 2px; color: var(--muted); overflow-wrap: anywhere; }
+.manifest-state { padding: 4px 7px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-soft); font-size: .7rem; }
+.manifest-state.soft_hold { border-color: #c98522; background: var(--tight-soft); color: #684209; }
+.manifest-state.seats_occupied { border-color: var(--route-teal); background: var(--open-soft); color: #155f56; }
+.manifest-message { min-height: 150px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px; text-align: center; }
+.manifest-message strong, .manifest-message p { margin: 0; }
+.manifest-message p { color: var(--muted); }
+.manifest-message.error { color: var(--full); }
+
 .toast { border-radius: 5px; border-left: 5px solid var(--ink-navy); }
 .toast.feedback { border-left-color: var(--route-teal); }
 .toast.prompt { border-left-color: var(--signal-amber); }
@@ -1421,4 +1497,8 @@ tbody tr:hover { background: #f1efe9; }
   .no-service-board { grid-template-columns: 1fr; padding: 22px 18px; }
   .calendar-exception-row { grid-template-columns: 1fr; }
   .calendar-exception-row .exception-note { grid-column: auto; }
+  .manifest-head { padding: 17px 18px; }
+  .manifest-riders { padding-inline: 18px; }
+  .manifest-riders li { grid-template-columns: 12px minmax(0, 1fr); }
+  .manifest-state { grid-column: 2; justify-self: start; }
 }

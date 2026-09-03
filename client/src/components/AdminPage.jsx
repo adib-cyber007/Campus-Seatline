@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { DEFAULT_BEACON_MIN_RSSI, startServiceUuidScan, supportsNativeBeaconScan } from '../bleScanner'
+import RiderManifestDialog from './RiderManifestDialog'
 
 const STOP_PAGE_SIZE = 8
 const localDateKey = () => {
@@ -86,7 +87,7 @@ function OrderedStopPicker({ all, value, onChange }) {
   )
 }
 
-function OverviewTab({ data, occupancy }) {
+function OverviewTab({ data, occupancy, onShowManifest }) {
   const occFor = b => occupancy[b.id] || b.occ || {}
   return (
     <section className="card wide admin-section">
@@ -112,8 +113,8 @@ function OverviewTab({ data, occupancy }) {
                 <td className="bus-route-cell"><strong className="bus-name-cell">{b.name}</strong><RouteLine stopIds={path} stops={data.stops} label={`${b.name} ${o.tripDirection || ''}`} /></td>
                 <td><strong className="trip-direction">{o.tripDirection || 'No trip'}</strong><small>{o.tripStatus === 'active' ? `${o.tripDate} · in service` : o.tripStatus === 'scheduled' ? `${o.tripDate} · scheduled` : 'Not scheduled today'}</small></td>
                 <td className="numeric-cell">{tripActive ? <span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span> : <span className="subtle">—</span>}</td>
-                <td className="numeric-cell">{o.seatsOccupied ?? 0}</td>
-                <td className="numeric-cell">{o.softHolds ?? 0}</td>
+                <td className="numeric-cell">{tripActive ? <button type="button" className="count-manifest-link" aria-label={`View ${b.name} occupied riders`} onClick={() => onShowManifest(b, 'seats_occupied')}>{o.seatsOccupied ?? 0}</button> : (o.seatsOccupied ?? 0)}</td>
+                <td className="numeric-cell">{tripActive ? <button type="button" className="count-manifest-link" aria-label={`View ${b.name} Soft Hold riders`} onClick={() => onShowManifest(b, 'soft_hold')}>{o.softHolds ?? 0}</button> : (o.softHolds ?? 0)}</td>
                 <td className="numeric-cell">{o.capacity ?? b.capacity}</td>
                 <td>{adj ? <span className="status-label warning">{adj > 0 ? `+${adj}` : adj}</span> : <span className="subtle">None</span>}</td>
                 <td className="subtle numeric-cell">{o.lastUpdated ? new Date(o.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
@@ -1153,6 +1154,7 @@ const adminTabs = [
 export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, connectionStatus }) {
   const [tab, setTab] = useState('overview')
   const [data, setData] = useState(null)
+  const [manifestTarget, setManifestTarget] = useState(null)
 
   const load = () => api('/admin/overview').then(setData).catch(e => toast(e.message, 'error'))
   useEffect(() => { load() }, [])
@@ -1193,7 +1195,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         ))}
       </nav>
       <div className="admin-content grid">
-        {tab === 'overview' && <OverviewTab data={data} occupancy={occupancy} />}
+        {tab === 'overview' && <OverviewTab data={data} occupancy={occupancy} onShowManifest={(bus, state) => setManifestTarget({ busName: bus.name, state, endpoint: `/admin/buses/${bus.id}/riders?state=${state}` })} />}
         {tab === 'schedule' && <ScheduleTab data={data} reload={load} toast={toast} />}
         {tab === 'stops' && <StopsTab data={data} reload={load} toast={toast} />}
         {tab === 'buses' && <BusesTab data={data} reload={load} toast={toast} />}
@@ -1203,6 +1205,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
         {tab === 'audit' && <AuditTab data={data} auditFeed={auditFeed} />}
         {tab === 'assistant' && <AssistantTab />}
       </div>
+      {manifestTarget && <RiderManifestDialog target={manifestTarget} refreshKey={refreshTick} onDismiss={() => setManifestTarget(null)} />}
     </div>
   )
 }

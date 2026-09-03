@@ -203,8 +203,10 @@ Key domain rules implemented in `services/occupancy.js`:
   `POST /api/rider/prompts/:id/respond`
 - Rider with Incharge authority (permission-gated):
   `POST /api/rider/incharge/buses/:busId/available` (edit Seats Available) ·
+  `GET /api/rider/incharge/buses/:busId/riders?state=soft_hold|seats_occupied` (assigned buses only) ·
   `GET /api/rider/incharge/assignments`
 - Admin: `GET /api/admin/overview` · `POST/PUT/DELETE /api/admin/stops[/:id]` · `POST/PUT/DELETE /api/admin/buses[/:id]` ·
+  `GET /api/admin/buses/:busId/riders?state=soft_hold|seats_occupied` ·
   `POST /api/admin/incharge-assignments` · `DELETE /api/admin/incharge-assignments/:id` (revoke) ·
   `POST /api/admin/assistant/query` (strictly read-only)
 

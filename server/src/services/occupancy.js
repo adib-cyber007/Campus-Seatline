@@ -95,6 +95,46 @@ export function tripCounts(busId) {
   return { baseOccupied, softHolds }
 }
 
+const MANIFEST_STATES = new Set(['soft_hold', 'seats_occupied'])
+
+export function activeTripRiderManifest(busId, state) {
+  if (!MANIFEST_STATES.has(state)) return null
+  const trip = activeTripForBus(busId)
+  if (!trip) {
+    return {
+      busId, tripId: null, tripDate: null, tripDirection: null, state,
+      liveCount: 0, reportCount: 0, manualAdjustment: 0, riders: []
+    }
+  }
+
+  const counts = countsForTrip(trip)
+  const riders = getDb().boardingReports
+    .filter(report => report.tripId === trip.id && report.busId === busId && report.state === state)
+    .map(report => {
+      const user = userById(report.userId)
+      return user ? {
+        id: user.id,
+        name: user.name,
+        identifier: user.email,
+        state: report.state
+      } : null
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.name.localeCompare(b.name) || a.identifier.localeCompare(b.identifier))
+
+  return {
+    busId,
+    tripId: trip.id,
+    tripDate: trip.date,
+    tripDirection: trip.direction,
+    state,
+    liveCount: state === 'soft_hold' ? counts.softHolds : counts.seatsOccupied,
+    reportCount: riders.length,
+    manualAdjustment: state === 'seats_occupied' ? counts.manualAdjustment : 0,
+    riders
+  }
+}
+
 export function hasBoardedToday(userId, busId) {
   return riderTripState(userId, busId)?.state === 'seats_occupied'
 }

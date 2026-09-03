@@ -135,6 +135,18 @@ async function main() {
   const earlyAdminOverview = (await call('/admin/overview', { token: adminTok })).data
   const rawBus1 = earlyAdminOverview.buses.find(item => item.id === bus1.busId)
   const rawOtherBus = earlyAdminOverview.buses.find(item => item.id === otherBus.busId)
+  const activeTrip1 = earlyAdminOverview.trips.find(item => item.busId === bus1.busId && item.status === 'active')
+  const adminHoldManifest = await call(`/admin/buses/${bus1.busId}/riders?state=soft_hold`, { token: adminTok })
+  check('Admin Soft Hold manifest comes from the current active Trip only',
+    adminHoldManifest.status === 200 && adminHoldManifest.data.tripId === activeTrip1.id &&
+    adminHoldManifest.data.liveCount === 1 && adminHoldManifest.data.reportCount === 1 &&
+    adminHoldManifest.data.riders.length === 1 && adminHoldManifest.data.riders[0].name === 'Rider One' &&
+    adminHoldManifest.data.riders[0].identifier === 'rider@campus.edu' &&
+    adminHoldManifest.data.riders[0].state === 'soft_hold')
+  const riderAdminManifest = await call(`/admin/buses/${bus1.busId}/riders?state=soft_hold`, { token: rider })
+  check('ordinary riders cannot access the Admin rider manifest endpoint', riderAdminManifest.status === 403)
+  const invalidManifestState = await call(`/admin/buses/${bus1.busId}/riders?state=released`, { token: adminTok })
+  check('manifest endpoint rejects states outside the two live count categories', invalidManifestState.status === 400)
   check('server-assigned 128-bit service UUIDs are visible in Admin data only',
     Boolean(rawBus1.beacon?.serviceUuid) && Boolean(rawOtherBus.beacon?.serviceUuid) &&
     rawBus1.beacon.serviceUuid !== rawOtherBus.beacon.serviceUuid &&
@@ -250,6 +262,13 @@ async function main() {
   let occ = (await call('/admin/overview', { token: adminTok })).data.occupancy.find(o => o.busId === bus1.busId)
   check('direct BLE board without soft hold adds occupied only', occ.seatsOccupied === 2 && occ.softHolds === 0)
   check('baseOccupied tracks rider states', occ.baseOccupied === 2 && occ.manualAdjustment === 0)
+  const occupiedManifest = await call(`/admin/buses/${bus1.busId}/riders?state=seats_occupied`, { token: adminTok })
+  check('Admin occupied manifest live-matches named riders for the active Trip',
+    occupiedManifest.status === 200 && occupiedManifest.data.tripId === activeTrip1.id &&
+    occupiedManifest.data.liveCount === 2 && occupiedManifest.data.reportCount === 2 &&
+    occupiedManifest.data.riders.every(item => item.state === 'seats_occupied') &&
+    occupiedManifest.data.riders.some(item => item.identifier === 'rider@campus.edu') &&
+    occupiedManifest.data.riders.some(item => item.identifier === 'rider2@campus.edu'))
 
   console.log('FIX 2: authority-based incharge + Seats Available editing')
 
@@ -259,6 +278,13 @@ async function main() {
   const incOv = (await call('/rider/overview', { token: incharge })).data
   check('authority resolved via assignment (bus scope)', incOv.authorityBusIds.includes(bus1.busId))
   check('authority bus visible with controls flag', incOv.buses.find(x => x.busId === bus1.busId)?.inchargeAuthority === true)
+  const inchargeManifest = await call(`/rider/incharge/buses/${bus1.busId}/riders?state=seats_occupied`, { token: incharge })
+  check('Incharge can read named active-Trip riders for an assigned bus',
+    inchargeManifest.status === 200 && inchargeManifest.data.tripId === activeTrip1.id &&
+    inchargeManifest.data.riders.length === 2 &&
+    inchargeManifest.data.riders.every(item => item.name && item.identifier))
+  const outOfScopeManifest = await call(`/rider/incharge/buses/${otherBus.busId}/riders?state=seats_occupied`, { token: incharge })
+  check('Incharge cannot read rider manifests outside assigned buses', outOfScopeManifest.status === 403)
   const inchargeDetection = await call('/rider/ble/detected', {
     method: 'POST', token: incharge,
     body: { beacon: { format: 'service_uuid', uuid: rawBus1.beacon.serviceUuid, rssi: -61 } }
@@ -275,6 +301,8 @@ async function main() {
 
   const rider3Login = await call('/auth/login', { method: 'POST', body: { email: 'rider3@campus.edu', password: 'rider123' } })
   const rider3 = rider3Login.data.token
+  const ordinaryRiderManifest = await call(`/rider/incharge/buses/${bus1.busId}/riders?state=seats_occupied`, { token: rider3 })
+  check('ordinary riders cannot access the Incharge rider manifest endpoint', ordinaryRiderManifest.status === 403)
   const noAuth2 = await call(`/rider/incharge/buses/${bus1.busId}/available`, { method: 'POST', token: rider3, body: { seatsAvailable: 30 } })
   check('rider without authority cannot edit Seats Available', noAuth2.status === 403)
 
@@ -288,6 +316,10 @@ async function main() {
   occ = (await call('/admin/overview', { token: adminTok })).data.occupancy.find(o => o.busId === bus1.busId)
   check('derived occupied visible in occupancy', occ.seatsOccupied === 5 && occ.availableSeats === 35)
   check('manual adjustment recorded', occ.manualAdjustment === 3 && occ.baseOccupied === 2)
+  const correctedManifest = await call(`/admin/buses/${bus1.busId}/riders?state=seats_occupied`, { token: adminTok })
+  check('manifest reconciles named reports with an audit-logged physical correction',
+    correctedManifest.data.liveCount === 5 && correctedManifest.data.reportCount === 2 &&
+    correctedManifest.data.manualAdjustment === 3 && correctedManifest.data.riders.length === 2)
 
   const rider3Board = await call('/rider/ble/simulate', { method: 'POST', token: rider3, body: { busId: bus1.busId } })
   const p3 = rider3Board.data.prompts[0]

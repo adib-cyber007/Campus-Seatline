@@ -8,7 +8,7 @@ import { authenticate, requireRole } from '../auth.js'
 import {
   snapshot, passedStopIdsFor, promptsForUser, applySoftHold, applyBleResponse,
   hasBoardedToday, tripStatesForUser, applyAvailableOverride, logRejectedBoarded,
-  releaseSoftHold, ensureSingleOptionAutoHold, broadcastAll
+  releaseSoftHold, ensureSingleOptionAutoHold, broadcastAll, activeTripRiderManifest
 } from '../services/occupancy.js'
 import { submitDetection } from '../services/bleGateway.js'
 import { emitToUser } from '../realtime.js'
@@ -306,6 +306,17 @@ router.post('/incharge/buses/:busId/available', (req, res) => {
   const result = applyAvailableOverride(req.user, bus, available)
   if (!result.ok) return res.status(result.status || 400).json({ error: result.error })
   res.json({ ok: true, override: result.entry })
+})
+
+router.get('/incharge/buses/:busId/riders', (req, res) => {
+  const bus = busById(req.params.busId)
+  if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  if (!riderAuthorityBusIds(req.user.id).includes(bus.id)) {
+    return res.status(403).json({ error: 'No active Incharge authority for this bus' })
+  }
+  const manifest = activeTripRiderManifest(bus.id, req.query.state)
+  if (!manifest) return res.status(400).json({ error: 'state must be soft_hold or seats_occupied' })
+  res.json({ ...manifest, busName: bus.name })
 })
 
 router.get('/incharge/assignments', (req, res) => {
