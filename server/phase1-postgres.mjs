@@ -344,7 +344,7 @@ async function main() {
     index.rows[0]?.indexdef.includes('seats_occupied'))
 
   const tripIndexes = await pool.query(
-    "SELECT indexname,indexdef FROM pg_indexes WHERE indexname IN ('boarding_reports_one_record_per_rider_bus_trip','boarding_reports_one_soft_hold_globally','trips_one_active_per_bus')"
+    "SELECT indexname,indexdef FROM pg_indexes WHERE schemaname = current_schema() AND indexname IN ('boarding_reports_one_record_per_rider_bus_trip','boarding_reports_one_soft_hold_globally','trips_one_active_per_bus')"
   )
   check('database also enforces one record per rider/Trip, one global Soft Hold, and one active Trip per bus',
     tripIndexes.rows.length === 3 && tripIndexes.rows.every(item => item.indexdef.includes('UNIQUE')))
