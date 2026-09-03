@@ -1,13 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { DEFAULT_BEACON_MIN_RSSI, startServiceUuidScan, supportsNativeBeaconScan } from '../bleScanner'
+import { campusDateKey, formatCampusDateTime, formatCampusTime } from '../time'
 import RiderManifestDialog from './RiderManifestDialog'
 
 const STOP_PAGE_SIZE = 8
-const localDateKey = () => {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-}
 
 function SectionHeading({ eyebrow, title, description, action }) {
   return (
@@ -117,7 +114,7 @@ function OverviewTab({ data, occupancy, onShowManifest }) {
                 <td className="numeric-cell">{tripActive ? <button type="button" className="count-manifest-link" aria-label={`View ${b.name} Soft Hold riders`} onClick={() => onShowManifest(b, 'soft_hold')}>{o.softHolds ?? 0}</button> : (o.softHolds ?? 0)}</td>
                 <td className="numeric-cell">{o.capacity ?? b.capacity}</td>
                 <td>{adj ? <span className="status-label warning">{adj > 0 ? `+${adj}` : adj}</span> : <span className="subtle">None</span>}</td>
-                <td className="subtle numeric-cell">{o.lastUpdated ? new Date(o.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+                <td className="subtle numeric-cell">{o.lastUpdated ? formatCampusTime(o.lastUpdated, data.campusTimeZone) : '—'}</td>
               </tr>
             )
           })}
@@ -353,7 +350,7 @@ function EditStop({ stop, buses, riders, assignments, reload, done, toast }) {
         <span className="label">Incharge authority for this stop</span>
         {stopAssignments.filter(a => !a.revokedAt).map(a => (
           <div key={a.id} className="stoprow">
-            <span>{a.riderName} <span className="muted">· since {new Date(a.grantedAt).toLocaleString()}</span></span>
+            <span>{a.riderName} <span className="muted">· since {formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</span></span>
             <button className="btn danger-quiet" disabled={Boolean(busy)} onClick={() => revoke(a.id)}>{busy === `revoke-${a.id}` ? 'Revoking…' : 'Revoke'}</button>
           </div>
         ))}
@@ -656,10 +653,10 @@ function AssignmentsTab({ data, reload, toast }) {
                 <td>{a.riderName}</td>
                 <td>{a.scopeType === 'bus' ? 'Bus' : 'Stop'} · {a.scopeName}</td>
                 <td className="muted">{a.grantedByName}</td>
-                <td className="muted">{new Date(a.grantedAt).toLocaleString()}</td>
+                <td className="muted">{formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</td>
                 <td>
                   {a.revokedAt
-                    ? <span className="muted">Revoked {new Date(a.revokedAt).toLocaleString()}</span>
+                    ? <span className="muted">Revoked {formatCampusDateTime(a.revokedAt, data.campusTimeZone)}</span>
                     : <span className="status-label covered"><span aria-hidden="true">✓</span>Active</span>}
                 </td>
                 <td>
@@ -787,7 +784,7 @@ function ScheduleTab({ data, reload, toast }) {
   const [serviceWeekdays, setServiceWeekdays] = useState(data.operatingCalendar?.serviceWeekdays || [1, 2, 3, 4, 5])
   const [exceptions, setExceptions] = useState(data.operatingCalendar?.exceptions || [])
   const [busy, setBusy] = useState(false)
-  const today = localDateKey()
+  const today = campusDateKey(new Date(), data.campusTimeZone)
   const todayTrips = (data.trips || []).filter(trip => trip.date === today)
 
   useEffect(() => {
@@ -891,7 +888,7 @@ function ScheduleTab({ data, reload, toast }) {
 }
 
 function UnmetDemandTab({ data }) {
-  const today = localDateKey()
+  const today = campusDateKey(new Date(), data.campusTimeZone)
   const [dateFrom, setDateFrom] = useState(today)
   const [dateTo, setDateTo] = useState(today)
   const [stopId, setStopId] = useState('all')
@@ -987,7 +984,7 @@ function UnmetDemandTab({ data }) {
             <summary>
               <span className="demand-route">
                 <span className="demand-signal" aria-hidden="true">{group.strandedCount ? '!' : '↗'}</span>
-                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>{group.tripDirection} trip · {group.tripDate} · latest {new Date(group.latestAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</small></span>
+                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>{group.tripDirection} trip · {group.tripDate} · latest {formatCampusTime(group.latestAt, data.campusTimeZone)}</small></span>
               </span>
               <span className="demand-metrics">
                 <span><strong>{group.events.length}</strong><small>unable to board</small></span>
@@ -1003,7 +1000,7 @@ function UnmetDemandTab({ data }) {
                   <tr key={event.id}>
                     <td><strong>{event.riderName}</strong><small>{event.riderEmail}</small></td>
                     <td><span className={`trip-direction ${event.tripDirection}`}>{event.tripDirection || 'morning'}</span><small>{event.tripDate}</small></td>
-                    <td className="subtle audit-time">{new Date(event.timestamp).toLocaleString()}</td>
+                    <td className="subtle audit-time">{formatCampusDateTime(event.timestamp, data.campusTimeZone)}</td>
                     <td>{event.channel === 'ble_confirmed' ? 'BLE confirmed' : 'Soft Hold'}</td>
                     <td>{event.hadAlternateBus
                       ? <span className="status-label info">Other option · {event.alternateBusNames.join(', ')}</span>
@@ -1057,7 +1054,7 @@ function AuditTab({ data, auditFeed }) {
         <tbody>
           {visible.map(item => (
             <tr key={item.id}>
-              <td className="subtle audit-time">{new Date(item.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</td>
+              <td className="subtle audit-time">{formatCampusDateTime(item.timestamp, data.campusTimeZone)}</td>
               <td>{item.tripDirection ? <><span className={`trip-direction ${item.tripDirection}`}>{item.tripDirection}</span><small>{item.tripDate}</small></> : <span className="subtle">—</span>}</td>
               <td><span className={`status-label audit-kind ${item.kind}`}>{item.kind.replace(/_/g, ' ')}</span></td>
               <td>{item.actor}</td>
@@ -1176,7 +1173,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
       <header className="page-intro admin-intro">
         <div>
           <h1>Network control desk</h1>
-          <p className="supporting">Manage stop-led bus service, rider authority, and live seat counts.</p>
+          <p className="supporting">Manage stop-led bus service, rider authority, and live seat counts. Times use {data.campusTimeZone}.</p>
         </div>
       </header>
 

@@ -12,8 +12,11 @@ notification-based reports from riders physically present at a stop.
 ## Quick start
 
 PostgreSQL 17+ is required. Create a database and a non-superuser application role, copy
-`server/.env.example` to `server/.env`, and set `DATABASE_URL` to that database before starting.
+`server/.env.example` to `server/.env`, set `DATABASE_URL`, and set `CAMPUS_TIME_ZONE` to the
+college's IANA timezone (the default is `Asia/Kolkata`) before starting.
 The schema is applied automatically and seed data is created only when the database is empty.
+Event timestamps are stored as UTC instants; service dates, configured trip start times, and UI
+display are interpreted in `CAMPUS_TIME_ZONE`, independent of the server or rider device timezone.
 
 ```bash
 npm run setup     # installs root + server + client deps
@@ -192,7 +195,7 @@ Key domain rules implemented in `services/occupancy.js`:
   manual adjustment (so subsequent crowd-sourced boardings still increment naturally), broadcast
   instantly, and audit-logged with previous/new values. A correction cannot claim more available
   seats than capacity permits while Soft Holds are active, and manual adjustments reset on the
-  next trip day. No reputation/trust-score/mismatch logic exists anywhere by design.
+  next Trip. No reputation/trust-score/mismatch logic exists anywhere by design.
 
 ## API surface (summary)
 
@@ -218,14 +221,13 @@ Key domain rules implemented in `services/occupancy.js`:
 
 ## Deferred edge cases (not silently dropped)
 
-- Multi-trip-per-day model: arrival events and rider report states are scoped by `tripDate`
-  (= calendar day, server timezone); a true multi-trip model with per-run identifiers is deferred.
+- Morning and Evening Trips have per-run identifiers and use the configured campus timezone for
+  service dates and activation clocks; host OS and rider-device timezones do not set trip boundaries.
 - The current PostgreSQL adapter deliberately serializes request-scoped domain transitions with
   a transaction advisory lock so the existing synchronous business rules remain atomic. A future
   high-throughput optimization can replace full-state persistence with row-level repositories
   without changing the verified domain behavior.
-- There is no separate schedule-confirmation entity in this MVP. The first rider overview for a
-  stop/day is the existing daily-trip confirmation boundary used for automatic Soft Holds.
+- Automatic Soft Holds are evaluated when each scheduled Trip activates.
 - Incharge Seats Available corrections are stored as a manual adjustment relative to the
   crowd-sourced count; if the correction is meant to be absolute forever, an explicit
   adjustment-reset action would need to be added.

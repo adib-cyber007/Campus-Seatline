@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { applySchema, closeDatabase, withTransaction } from './database/client.js'
 import { emptyState, loadState, saveState } from './database/stateStore.js'
 import { beaconIdentityForBus } from './beaconIdentity.js'
+import { campusDateKey } from './time.js'
 
 const uid = () => crypto.randomUUID()
 
@@ -35,10 +36,7 @@ const db = new Proxy({}, {
 export const nextId = uid
 export const getDb = () => currentState()
 
-export function todayKey() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
+export const todayKey = (value = new Date()) => campusDateKey(value)
 
 export function occupancyOf(busId) {
   const tripDate = todayKey()
@@ -470,5 +468,15 @@ export { closeDatabase }
 
 await applySchema()
 await runDatabaseTransaction(async state => {
+  const campusToday = todayKey()
+  const now = new Date().toISOString()
+  for (const report of state.boardingReports.filter(item =>
+    !item.tripId && item.tripDate < campusToday && ['soft_hold', 'seats_occupied'].includes(item.state)
+  )) {
+    report.state = 'released'
+    report.releaseReason = report.releaseReason || 'legacy_day_closed'
+    report.releasedAt = report.releasedAt || now
+    report.updatedAt = now
+  }
   if (state.users.length === 0) seed()
 })

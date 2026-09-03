@@ -4,6 +4,7 @@ import {
   DEFAULT_BEACON_MIN_RSSI, disableBackgroundBeaconMonitoring, enableBackgroundBeaconMonitoring,
   getBackgroundBeaconStatus, startServiceUuidScan, supportsNativeBeaconScan
 } from '../bleScanner'
+import { campusHour, formatCampusDate, formatCampusTime } from '../time'
 import RiderManifestDialog from './RiderManifestDialog'
 
 function fmt(ms) {
@@ -460,7 +461,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
       <div className="rider-page">
         <header className="page-intro rider-intro">
           <div>
-            <p className="dayline">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+            <p className="dayline">{formatCampusDate(new Date(), overview.campusTimeZone)}</p>
             <h1>No trips scheduled today</h1>
             <p className="supporting">The Operating Calendar marks today as a non-service day.</p>
           </div>
@@ -487,13 +488,14 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
     Number.isInteger(parsedBeaconMinRssi) && parsedBeaconMinRssi >= -100 && parsedBeaconMinRssi <= -30
   const timeline = overview.stops.flatMap(stop => stop.timeline.map(row => ({ ...row, stopName: stop.name })))
   const beaconConfigLocked = bleScan.active || backgroundBle.active
+  const currentCampusHour = campusHour(new Date(), overview.campusTimeZone)
 
   return (
     <div className="rider-page">
       <header className="page-intro rider-intro">
         <div>
-          <p className="dayline">{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</p>
-          <h1>Good {new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}, {user.name.split(' ')[0]}</h1>
+          <p className="dayline">{formatCampusDate(new Date(), overview.campusTimeZone)}</p>
+          <h1>Good {currentCampusHour < 12 ? 'morning' : currentCampusHour < 17 ? 'afternoon' : 'evening'}, {user.name.split(' ')[0]}</h1>
           <p className="supporting">Your buses for {overview.stops.map(stop => stop.name).join(' · ')}</p>
         </div>
         <div className="intro-meta">
@@ -623,7 +625,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
               {combinedNotifications.map(item => (
                 <li key={item.id} className={item.type}>
                   <span className="notification-symbol" aria-hidden="true">{item.type === 'arrival' ? '→' : item.type === 'error' ? '!' : '✓'}</span>
-                  <span>{item.message}<time>{new Date(item.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time></span>
+                  <span>{item.message}<time>{formatCampusTime(item.createdAt, overview.campusTimeZone)}</time></span>
                 </li>
               ))}
             </ul>

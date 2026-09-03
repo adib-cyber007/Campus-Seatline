@@ -1,5 +1,6 @@
 import { activeBuses, effectiveStopIdsForUser, getDb, nextId, runDatabaseTransaction } from '../db.js'
 import { emitAdmins, emitAll } from '../realtime.js'
+import { campusDateKey, campusMinutes, weekdayForDateKey } from '../time.js'
 
 const ACTIVE_REPORT_STATES = new Set(['soft_hold', 'seats_occupied'])
 const DIRECTIONS = ['morning', 'evening']
@@ -10,18 +11,7 @@ let scheduler = null
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
 export function dateKeyAt(value = new Date()) {
-  const date = value instanceof Date ? value : new Date(value)
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
-}
-
-function localDateForKey(dateKey) {
-  const [year, month, day] = String(dateKey).split('-').map(Number)
-  return new Date(year, month - 1, day, 12, 0, 0, 0)
-}
-
-function minutesAt(value) {
-  const date = value instanceof Date ? value : new Date(value)
-  return date.getHours() * 60 + date.getMinutes()
+  return campusDateKey(value)
 }
 
 function minutesForTime(value, fallback) {
@@ -32,7 +22,7 @@ function minutesForTime(value, fallback) {
 export function isServiceDate(dateKey, calendar = getDb().operatingCalendar) {
   const exception = calendar.exceptions.find(item => item.date === dateKey)
   if (exception) return Boolean(exception.service)
-  const day = localDateForKey(dateKey).getDay() || 7
+  const day = weekdayForDateKey(dateKey)
   return calendar.serviceWeekdays.includes(day)
 }
 
@@ -206,7 +196,7 @@ export function forceCloseTrip(trip, { reason = 'force_closed', timestamp = new 
 }
 
 function desiredDirection(bus, now) {
-  const currentMinutes = minutesAt(now)
+  const currentMinutes = campusMinutes(now)
   const morning = minutesForTime(bus.morningStartTime, '07:00')
   const evening = minutesForTime(bus.eveningStartTime, '17:00')
   if (currentMinutes >= evening) return 'evening'

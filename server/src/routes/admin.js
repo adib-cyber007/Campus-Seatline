@@ -11,6 +11,7 @@ import { emitAll } from '../realtime.js'
 import { beaconIdentityForBus } from '../beaconIdentity.js'
 import { enrichedUnmetDemandEvents, aggregateUnmetDemand } from '../services/unmetDemand.js'
 import { validateTripDirection } from '../services/trips.js'
+import { CAMPUS_TIME_ZONE } from '../time.js'
 
 const router = Router()
 router.use(authenticate, requireRole('admin'))
@@ -82,6 +83,7 @@ router.get('/overview', (req, res) => {
   const unmetDemandEvents = tripFilter(enrichedUnmetDemandEvents(), req.query)
   const audit = tripFilter(auditSnapshot(), req.query)
   res.json({
+    campusTimeZone: CAMPUS_TIME_ZONE,
     stops,
     buses: activeBuses().map(b => ({
       ...b,

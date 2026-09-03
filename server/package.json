@@ -9,6 +9,7 @@
     "start": "node src/index.js",
     "smoke": "node --import ./test-database-env.mjs smoke.mjs",
     "smoke:trips": "node --import ./test-database-env.mjs trips-smoke.mjs",
+    "smoke:time": "node --import ./test-database-env.mjs time-smoke.mjs",
     "verify:postgres": "node --import ./test-database-env.mjs phase1-postgres.mjs"
   },
   "dependencies": {

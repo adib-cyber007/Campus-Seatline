@@ -16,8 +16,14 @@ if (!process.env.DATABASE_URL) {
 
 const { Pool } = pg
 pg.types.setTypeParser(1082, value => value)
+
+const databaseUrl = new URL(process.env.DATABASE_URL)
+const connectionOptions = databaseUrl.searchParams.get('options') || ''
+if (!/(?:^|\s)-c\s+timezone=/.test(connectionOptions)) {
+  databaseUrl.searchParams.set('options', `${connectionOptions} -c timezone=UTC`.trim())
+}
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl.toString(),
   max: Number(process.env.DATABASE_POOL_SIZE || 10),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 8_000

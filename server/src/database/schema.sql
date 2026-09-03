@@ -309,10 +309,6 @@ ALTER TABLE boarding_reports ADD COLUMN IF NOT EXISTS alight_stop_id uuid REFERE
 ALTER TABLE boarding_reports ADD COLUMN IF NOT EXISTS trip_direction text NOT NULL DEFAULT 'morning';
 ALTER TABLE boarding_reports DROP CONSTRAINT IF EXISTS boarding_reports_user_id_bus_id_trip_date_key;
 DROP INDEX IF EXISTS boarding_reports_one_active_per_rider_trip;
-UPDATE boarding_reports
-SET state = 'released', release_reason = COALESCE(release_reason, 'legacy_day_closed'),
-    released_at = COALESCE(released_at, now()), updated_at = now()
-WHERE trip_date < current_date AND state IN ('soft_hold', 'seats_occupied');
 CREATE UNIQUE INDEX IF NOT EXISTS boarding_reports_one_record_per_rider_bus_trip
   ON boarding_reports (user_id, trip_id) WHERE trip_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS boarding_reports_one_active_per_rider_service_trip

@@ -14,6 +14,7 @@ import { submitDetection } from '../services/bleGateway.js'
 import { emitToUser } from '../realtime.js'
 import { normalizeServiceUuid } from '../beaconIdentity.js'
 import { activeTripForBus, isServiceDate } from '../services/trips.js'
+import { CAMPUS_TIME_ZONE } from '../time.js'
 
 const router = Router()
 router.use(authenticate, requireRole('rider'))
@@ -89,6 +90,7 @@ router.get('/overview', (req, res) => {
     })
   const states = tripStatesForUser(user.id)
   res.json({
+    campusTimeZone: CAMPUS_TIME_ZONE,
     user: sanitizeUser(user),
     stops: effectiveStopIds.map(id => stopById(id)).filter(Boolean),
     defaultStops: user.stopIds.map(id => stopById(id)).filter(Boolean),
