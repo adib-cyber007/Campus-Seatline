@@ -99,8 +99,8 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
           <span><strong>{state.label}</strong><small>{state.note}</small></span>
         </div>
         <dl className="seat-breakdown">
-          <div><dt>Occupied</dt><dd>{bus.inchargeAuthority && tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} occupied riders`} onClick={() => onShowManifest(bus, 'seats_occupied')}>{occupancy.seatsOccupied}</button> : occupancy.seatsOccupied}</dd></div>
-          <div><dt>Soft Holds</dt><dd>{bus.inchargeAuthority && tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} Soft Hold riders`} onClick={() => onShowManifest(bus, 'soft_hold')}>{occupancy.softHolds}</button> : occupancy.softHolds}</dd></div>
+          <div><dt>Occupied</dt><dd>{tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} occupied riders`} onClick={() => onShowManifest(bus, 'seats_occupied')}>{occupancy.seatsOccupied}</button> : occupancy.seatsOccupied}</dd></div>
+          <div><dt>Soft Holds</dt><dd>{tripActive ? <button type="button" className="count-manifest-link inverse" aria-label={`View ${bus.busName} Soft Hold riders`} onClick={() => onShowManifest(bus, 'soft_hold')}>{occupancy.softHolds}</button> : occupancy.softHolds}</dd></div>
         </dl>
       </div>
 
@@ -524,7 +524,7 @@ export default function RiderPage({ user, toast, occupancy, prompts, notificatio
             onSoft={answerSoft}
             onRelease={releaseHold}
             onAvailable={setAvailable}
-            onShowManifest={(bus, state) => setManifestTarget({ busName: bus.busName, state, endpoint: `/rider/incharge/buses/${bus.busId}/riders?state=${state}` })}
+            onShowManifest={(bus, state) => setManifestTarget({ busName: bus.busName, state, endpoint: `/rider/buses/${bus.busId}/riders?state=${state}` })}
           />
         ))}
       </section>

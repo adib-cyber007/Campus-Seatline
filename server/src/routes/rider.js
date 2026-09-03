@@ -115,6 +115,18 @@ router.get('/overview', (req, res) => {
   })
 })
 
+router.get('/buses/:busId/riders', (req, res) => {
+  const bus = busById(req.params.busId)
+  if (!bus) return res.status(404).json({ error: 'Bus not found' })
+  const effectiveStopIds = effectiveStopIdsForUser(req.user)
+  const canView = bus.stopIds.some(stopId => effectiveStopIds.includes(stopId)) ||
+    riderAuthorityBusIds(req.user.id).includes(bus.id)
+  if (!canView) return res.status(403).json({ error: 'Bus does not serve your effective stop today' })
+  const manifest = activeTripRiderManifest(bus.id, req.query.state)
+  if (!manifest) return res.status(400).json({ error: 'state must be soft_hold or seats_occupied' })
+  res.json({ ...manifest, busName: bus.name })
+})
+
 router.post('/soft-hold', (req, res) => {
   const { busId, response } = req.body || {}
   if (!['yes', 'no'].includes(response)) return res.status(400).json({ error: 'Response must be yes or no' })

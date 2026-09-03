@@ -143,6 +143,10 @@ async function main() {
     adminHoldManifest.data.riders.length === 1 && adminHoldManifest.data.riders[0].name === 'Rider One' &&
     adminHoldManifest.data.riders[0].identifier === 'rider@campus.edu' &&
     adminHoldManifest.data.riders[0].state === 'soft_hold')
+  const riderHoldManifest = await call(`/rider/buses/${bus1.busId}/riders?state=soft_hold`, { token: rider })
+  check('ordinary rider can read the active-Trip manifest for a bus serving their stop',
+    riderHoldManifest.status === 200 && riderHoldManifest.data.tripId === activeTrip1.id &&
+    riderHoldManifest.data.riders[0].identifier === 'rider@campus.edu')
   const riderAdminManifest = await call(`/admin/buses/${bus1.busId}/riders?state=soft_hold`, { token: rider })
   check('ordinary riders cannot access the Admin rider manifest endpoint', riderAdminManifest.status === 403)
   const invalidManifestState = await call(`/admin/buses/${bus1.busId}/riders?state=released`, { token: adminTok })
@@ -255,6 +259,8 @@ async function main() {
   const rider2 = login2.data.token
   const ov2 = (await call('/rider/overview', { token: rider2 })).data
   check('downstream rider received arrival broadcast', ov2.notifications.some(n => n.message.includes('has reported at')))
+  const irrelevantBusManifest = await call(`/rider/buses/${otherBus.busId}/riders?state=seats_occupied`, { token: rider2 })
+  check('ordinary rider cannot inspect a bus outside their effective stop', irrelevantBusManifest.status === 403)
 
   const directBoard = await call('/rider/ble/simulate', { method: 'POST', token: rider2, body: { busId: bus1.busId } })
   const p2 = directBoard.data.prompts[0]

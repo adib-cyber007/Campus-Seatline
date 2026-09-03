@@ -200,6 +200,7 @@ Key domain rules implemented in `services/occupancy.js`:
 - `GET  /api/meta` (public stop list) · `GET /api/me`
 - Rider: `GET /api/rider/overview` · `POST /api/rider/soft-hold` · `POST /api/rider/ble/simulate` ·
   `POST /api/rider/soft-hold/release` · `POST/DELETE /api/rider/daily-stop` ·
+  `GET /api/rider/buses/:busId/riders?state=soft_hold|seats_occupied` (buses serving the effective stop) ·
   `POST /api/rider/prompts/:id/respond`
 - Rider with Incharge authority (permission-gated):
   `POST /api/rider/incharge/buses/:busId/available` (edit Seats Available) ·
