@@ -106,9 +106,9 @@ function OverviewTab({ data, occupancy, onShowManifest }) {
             const state = available === 0 ? 'full' : available !== null && available / (o.capacity || b.capacity) <= .25 ? 'tight' : 'open'
             const path = o.stopSequence?.length ? o.stopSequence : b.stopIds
             return (
-              <tr key={b.id}>
+              <tr key={b.id} className={`bus-state-row ${state}`}>
                 <td className="bus-route-cell"><strong className="bus-name-cell">{b.name}</strong><RouteLine stopIds={path} stops={data.stops} label={`${b.name} ${o.tripDirection || ''}`} /></td>
-                <td><strong className="trip-direction">{o.tripDirection || 'No trip'}</strong><small>{o.tripStatus === 'active' ? `${o.tripDate} · in service` : o.tripStatus === 'scheduled' ? `${o.tripDate} · scheduled` : 'Not scheduled today'}</small></td>
+                <td><strong className="trip-direction">{o.tripDirection || 'No trip'}</strong><small className="trip-meta">{o.tripStatus === 'active' ? `${o.tripDate}, in service` : o.tripStatus === 'scheduled' ? `${o.tripDate}, scheduled` : 'Not scheduled today'}</small></td>
                 <td className="numeric-cell">{tripActive ? <span className={`availability-cell ${state}`}><strong>{available}</strong><span>{state === 'full' ? 'Full' : state === 'tight' ? 'Nearly full' : 'Seats open'}</span></span> : <span className="subtle">—</span>}</td>
                 <td className="numeric-cell">{tripActive ? <button type="button" className="count-manifest-link" aria-label={`View ${b.name} occupied riders`} onClick={() => onShowManifest(b, 'seats_occupied')}>{o.seatsOccupied ?? 0}</button> : (o.seatsOccupied ?? 0)}</td>
                 <td className="numeric-cell">{tripActive ? <button type="button" className="count-manifest-link" aria-label={`View ${b.name} Soft Hold riders`} onClick={() => onShowManifest(b, 'soft_hold')}>{o.softHolds ?? 0}</button> : (o.softHolds ?? 0)}</td>
@@ -350,7 +350,7 @@ function EditStop({ stop, buses, riders, assignments, reload, done, toast }) {
         <span className="label">Incharge authority for this stop</span>
         {stopAssignments.filter(a => !a.revokedAt).map(a => (
           <div key={a.id} className="stoprow">
-            <span>{a.riderName} <span className="muted">· since {formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</span></span>
+            <span>{a.riderName} <span className="muted data-time">since {formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</span></span>
             <button className="btn danger-quiet" disabled={Boolean(busy)} onClick={() => revoke(a.id)}>{busy === `revoke-${a.id}` ? 'Revoking…' : 'Revoke'}</button>
           </div>
         ))}
@@ -653,10 +653,10 @@ function AssignmentsTab({ data, reload, toast }) {
                 <td>{a.riderName}</td>
                 <td>{a.scopeType === 'bus' ? 'Bus' : 'Stop'} · {a.scopeName}</td>
                 <td className="muted">{a.grantedByName}</td>
-                <td className="muted">{formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</td>
+                <td className="muted data-time">{formatCampusDateTime(a.grantedAt, data.campusTimeZone)}</td>
                 <td>
                   {a.revokedAt
-                    ? <span className="muted">Revoked {formatCampusDateTime(a.revokedAt, data.campusTimeZone)}</span>
+                    ? <span className="muted data-time">Revoked {formatCampusDateTime(a.revokedAt, data.campusTimeZone)}</span>
                     : <span className="status-label covered"><span aria-hidden="true">✓</span>Active</span>}
                 </td>
                 <td>
@@ -984,7 +984,7 @@ function UnmetDemandTab({ data }) {
             <summary>
               <span className="demand-route">
                 <span className="demand-signal" aria-hidden="true">{group.strandedCount ? '!' : '↗'}</span>
-                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small>{group.tripDirection} trip · {group.tripDate} · latest {formatCampusTime(group.latestAt, data.campusTimeZone)}</small></span>
+                <span><strong>{group.stopName} <span aria-hidden="true">→</span> {group.busName}</strong><small className="data-time">{group.tripDirection} trip, {group.tripDate}, latest {formatCampusTime(group.latestAt, data.campusTimeZone)}</small></span>
               </span>
               <span className="demand-metrics">
                 <span><strong>{group.events.length}</strong><small>unable to board</small></span>
@@ -1055,7 +1055,7 @@ function AuditTab({ data, auditFeed }) {
           {visible.map(item => (
             <tr key={item.id}>
               <td className="subtle audit-time">{formatCampusDateTime(item.timestamp, data.campusTimeZone)}</td>
-              <td>{item.tripDirection ? <><span className={`trip-direction ${item.tripDirection}`}>{item.tripDirection}</span><small>{item.tripDate}</small></> : <span className="subtle">—</span>}</td>
+              <td>{item.tripDirection ? <><span className={`trip-direction ${item.tripDirection}`}>{item.tripDirection}</span><small className="trip-meta">{item.tripDate}</small></> : <span className="subtle">—</span>}</td>
               <td><span className={`status-label audit-kind ${item.kind}`}>{item.kind.replace(/_/g, ' ')}</span></td>
               <td>{item.actor}</td>
               <td>{item.detail}</td>
@@ -1178,7 +1178,7 @@ export default function AdminPage({ toast, occupancy, auditFeed, refreshTick, co
       </header>
 
       <section className="ops-summary" aria-label="Network summary">
-        <div className="manifest-stat fleet"><span className="summary-icon bus" aria-hidden="true">▣</span><span><strong>{data.buses.length}</strong><small>Buses in service · {totalCapacity} seats</small></span></div>
+        <div className="manifest-stat fleet"><span className="summary-icon bus" aria-hidden="true">▣</span><span><strong>{data.buses.length}</strong><small>Buses in service, {totalCapacity} seats</small></span></div>
         <div className="manifest-stat stops"><span className="summary-icon stop" aria-hidden="true">●</span><span><strong>{data.stops.length}</strong><small>Stops in network</small></span></div>
         <div className="manifest-stat authority"><span className="summary-icon authority" aria-hidden="true">◇</span><span><strong>{activeAssignments}</strong><small>Active Incharge grants</small></span></div>
         <div className={`manifest-stat coverage ${coveredStops < data.stops.length ? 'attention' : 'covered'}`}><span className="summary-icon coverage" aria-hidden="true">{coveredStops < data.stops.length ? '!' : '✓'}</span><span><strong>{data.stops.length - coveredStops}</strong><small>{coveredStops < data.stops.length ? 'Stops need coverage' : 'Every stop is covered'}</small></span></div>

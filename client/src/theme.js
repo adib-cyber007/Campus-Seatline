@@ -37,7 +37,7 @@ export function applyTheme(theme, targetDocument = globalThis.document) {
   root.style.colorScheme = normalized
 
   const themeColor = targetDocument.querySelector?.('meta[name="theme-color"]')
-  themeColor?.setAttribute('content', normalized === THEMES.DARK ? '#0F182B' : '#F7F5F0')
+  themeColor?.setAttribute('content', normalized === THEMES.DARK ? '#10151F' : '#EEF1F4')
 
   return normalized
 }

@@ -82,7 +82,7 @@ function BusCard({ bus, occupancy, activeBusId, activeIsBoarded, drafts, setDraf
       <header className="bus-card-head">
         <div>
           <h2 id={`bus-${bus.busId}`}>{bus.busName}</h2>
-          <p className="trip-service-line"><strong>{occupancy.tripDirection || 'No'}</strong> trip · {occupancy.tripStatus === 'active' ? 'in service' : occupancy.tripStatus === 'scheduled' ? 'scheduled' : 'not scheduled'}</p>
+          <p className="trip-service-line"><strong>{occupancy.tripDirection || 'No'}</strong> trip, {occupancy.tripStatus === 'active' ? 'in service' : occupancy.tripStatus === 'scheduled' ? 'scheduled' : 'not scheduled'}</p>
         </div>
         <div className="bus-badges">
           {bus.inchargeAuthority && <span className="status-label authority"><span aria-hidden="true">◇</span> Incharge access</span>}
